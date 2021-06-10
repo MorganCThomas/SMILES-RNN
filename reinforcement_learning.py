@@ -101,7 +101,7 @@ def get_args():
 
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('--batch_size', type=int, default=64, help=' ')
-    optional.add_argument('--n_steps', type=int, default=250, help=' ')
+    optional.add_argument('--n_steps', type=int, default=200, help=' ')
     optional.add_argument('-d', '--device', default='gpu', help=' ')
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
     optional.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
