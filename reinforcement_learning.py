@@ -57,6 +57,7 @@ def main(args):
             agent.save(os.path.join(ms.save_dir, f'Agent_{step}.ckpt'))
             ms.write_scores()
             ms.kill_dash_monitor()
+            raise
 
         if args.rl_mode == 'reinvent':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
@@ -100,9 +101,9 @@ def get_args():
     required.add_argument('-m', '--molscore_config', type=str, help='Path to molscore config (.json)', required=True)
 
     optional = parser.add_argument_group('Optional arguments')
-    optional.add_argument('--batch_size', type=int, default=64)
-    optional.add_argument('--n_steps', type=int, default=500)
-    optional.add_argument('-d', '--device', default='gpu', help='')
+    optional.add_argument('--batch_size', type=int, default=64, help=' ')
+    optional.add_argument('--n_steps', type=int, default=200, help=' ')
+    optional.add_argument('-d', '--device', default='gpu', help=' ')
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
     optional.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     optional.add_argument('-rl', '--rl_mode', type=str, default='reinvent',
