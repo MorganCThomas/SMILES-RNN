@@ -57,6 +57,7 @@ def main(args):
             agent.save(os.path.join(ms.save_dir, f'Agent_{step}.ckpt'))
             ms.write_scores()
             ms.kill_dash_monitor()
+            raise
 
         if args.rl_mode == 'reinvent':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
