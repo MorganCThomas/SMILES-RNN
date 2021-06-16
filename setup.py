@@ -8,5 +8,6 @@ setup(
     author='Morgan Thomas',
     author_email='morganthomas263@gmail.com',
     description='A Generic SMILES-RNN, modified from and based off reinvent 2.0',
-    scripts=['sample_model.py', 'randomize_smiles.py', 'train_prior.py', 'fine_tune.py', 'reinforcement_learning.py']
+    scripts=['sample_model.py', 'randomize_smiles.py', 'train_prior.py',
+             'fine_tune.py', 'reinforcement_learning.py', 'deep_smiles.py']
 )
