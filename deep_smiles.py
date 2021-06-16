@@ -4,6 +4,7 @@ import random
 from multiprocessing import Pool
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from tqdm.auto import tqdm
+from model.utils import read_smiles, save_smiles
 
 import deepsmiles
 
@@ -56,8 +57,7 @@ def get_args():
 
 def main(args):
     # Read smiles
-    with open(args.input, 'rt') as f:
-        smiles = f.read().splitlines()
+    smiles = read_smiles(args.input)
 
     # Randomize smiles
     converter = deepsmiles.Converter(rings=args.no_rings, branches=args.no_branches)
@@ -74,8 +74,7 @@ def main(args):
         random.shuffle(deep_smiles)
 
     # Save output
-    with open(args.output, 'wt') as f:
-        _ = [f.write(f'{smi}\n') for smi in deep_smiles]
+    save_smiles(deep_smiles, args.output)
 
 
 if __name__ == '__main__':

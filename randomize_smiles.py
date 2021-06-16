@@ -7,6 +7,7 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from tqdm.auto import tqdm
 from functools import partial
 from itertools import chain
+from model.utils import read_smiles, save_smiles
 
 
 def randomize_smiles(smi, n_rand=10, random_type="restricted",):
@@ -89,8 +90,7 @@ def get_args():
 
 def main(args):
     # Read smiles
-    with open(args.input, 'rt') as f:
-        smiles = f.read().splitlines()
+    smiles = read_smiles(args.input)
 
     # Randomize smiles
     with Pool(args.n_jobs) as pool:
@@ -109,8 +109,7 @@ def main(args):
         random.shuffle(random_smiles)
 
     # Save output
-    with open(args.output, 'wt') as f:
-        _ = [f.write(f'{smi}\n') for smi in random_smiles]
+    save_smiles(random_smiles, args.output)
 
 
 if __name__ == '__main__':
