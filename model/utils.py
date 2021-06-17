@@ -69,10 +69,13 @@ def fraction_valid_smiles(smiles):
     i = 0
     mols = []
     for smile in smiles:
-        mol = Chem.MolFromSmiles(smile)
-        if mol:
-            i += 1
-            mols.append(mol)
+        try:
+            mol = Chem.MolFromSmiles(smile)
+            if mol:
+                i += 1
+                mols.append(mol)
+        except TypeError:  # None passed as smile
+            pass
     fraction = 100 * i / len(smiles)
     return round(fraction, 2), mols
 

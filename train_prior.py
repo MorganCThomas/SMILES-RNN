@@ -51,13 +51,21 @@ def main(args):
         test_smiles = utils.read_smiles(args.test_smiles)
         all_smiles += test_smiles
 
+    # Set tokenizer
+    if args.grammar == 'SMILES':
+        tokenizer = SMILESTokenizer()
+    if args.grammar == 'deepSMILES':
+        tokenizer = DeepSMILESTokenizer()
+    if args.grammar == 'SELFIES':
+        tokenizer = SELFIESTokenizer()
+
     # Create vocabulary
     logger.info('Creating vocabulary')
-    smiles_vocab = create_vocabulary(smiles_list=all_smiles, tokenizer=SMILESTokenizer())
+    smiles_vocab = create_vocabulary(smiles_list=all_smiles, tokenizer=tokenizer)
 
     # Create dataset
     dataset = Dataset(smiles_list=train_smiles, vocabulary=smiles_vocab,
-                      tokenizer=SMILESTokenizer())
+                      tokenizer=tokenizer)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
                                              shuffle=True, collate_fn=Dataset.collate_fn)
 
@@ -73,7 +81,7 @@ def main(args):
 
     # Create model
     logger.info('Loading model')
-    prior = Model(vocabulary=smiles_vocab, tokenizer=SMILESTokenizer(),
+    prior = Model(vocabulary=smiles_vocab, tokenizer=tokenizer,
                   network_params=network_params, max_sequence_length=256, device=device)
 
     # Setup optimizer TODO update to adaptive learning
@@ -154,6 +162,8 @@ def get_args():
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files')
 
     optional = parser.add_argument_group('Optional arguments')
+    optional.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'SELFIES'], default='SMILES',
+                          help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
     optional.add_argument('--valid_smiles', help='Validation smiles')
     optional.add_argument('--test_smiles', help='Test smiles')
     optional.add_argument('--validate_frequency', default=500, help=' ')

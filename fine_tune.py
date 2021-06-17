@@ -53,12 +53,15 @@ def main(args):
             if i < n_freeze:  # Freeze parameter
                 param.requires_grad = False
 
+    # Set tokenizer
+    tokenizer = prior.tokenizer
+
     # Update smiles to fit vocabulary
-    tune_smiles = fit_smiles_to_vocabulary(prior.vocabulary, tune_smiles, SMILESTokenizer())
+    tune_smiles = fit_smiles_to_vocabulary(prior.vocabulary, tune_smiles, tokenizer)
 
     # Create dataset
     dataset = Dataset(smiles_list=tune_smiles, vocabulary=prior.vocabulary,
-                      tokenizer=SMILESTokenizer())
+                      tokenizer=tokenizer)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
                                              shuffle=True, collate_fn=Dataset.collate_fn)
 

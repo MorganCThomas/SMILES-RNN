@@ -5,6 +5,9 @@ Vocabulary helper class from https://github.com/MolecularAI/Reinvent
 import re
 import numpy as np
 
+import deepsmiles
+import selfies
+
 
 # contains the data structure
 class Vocabulary:
@@ -79,6 +82,7 @@ class Vocabulary:
 class SMILESTokenizer:
     """Deals with the tokenization and untokenization of SMILES."""
 
+    GRAMMAR = 'SMILES'
     REGEXPS = {
         "brackets": re.compile(r"(\[[^\]]*\])"),
         "2_ring_nums": re.compile(r"(%\d{2})"),
@@ -117,6 +121,82 @@ class SMILESTokenizer:
         return smi
 
 
+class DeepSMILESTokenizer:
+    """Deals with the tokenization and untokenization of SMILES."""
+
+    GRAMMAR = 'deepSMILES'
+    REGEXPS = {
+        "brackets": re.compile(r"(\[[^\]]*\])"),
+        "brcl": re.compile(r"(Br|Cl)")
+    }
+    REGEXP_ORDER = ["brackets", "brcl"]
+    converter = deepsmiles.Converter(rings=True, branches=True)
+
+    def tokenize(self, data, with_begin_and_end=True):
+        """Tokenizes a SMILES string via conversion to deepSMILES"""
+        data = self.converter.encode(data)
+
+        def split_by(data, regexps):
+            if not regexps:
+                return list(data)
+            regexp = self.REGEXPS[regexps[0]]
+            splitted = regexp.split(data)
+            tokens = []
+            for i, split in enumerate(splitted):
+                if i % 2 == 0:
+                    tokens += split_by(split, regexps[1:])
+                else:
+                    tokens.append(split)
+            return tokens
+
+        tokens = split_by(data, self.REGEXP_ORDER)
+        if with_begin_and_end:
+            tokens = ["^"] + tokens + ["$"]
+        return tokens
+
+    def untokenize(self, tokens):
+        """Untokenizes a deepSMILES string followed by conversion to SMILES"""
+        smi = ""
+        for token in tokens:
+            if token == "$":
+                break
+            if token != "^":
+                smi += token
+        try:
+            smi = self.converter.decode(smi)
+        except: # deepsmiles.DecodeError doesn't capture IndexError?
+            smi = None
+        return smi
+
+
+class SELFIESTokenizer:
+    """Deals with the tokenization and untokenization of SMILES."""
+
+    GRAMMAR = 'SELFIES'
+
+    def tokenize(self, data, with_begin_and_end=True):
+        """Tokenizes a SMILES string via conversion to deepSMILES"""
+        data = selfies.encoder(data)
+        tokens = list(selfies.split_selfies(data))
+        if with_begin_and_end:
+            tokens = ["^"] + tokens + ["$"]
+        return tokens
+
+    def untokenize(self, tokens):
+        """Untokenizes a deepSMILES string followed by conversion to SMILES"""
+        smi = ""
+        for token in tokens:
+            if token == "$":
+                break
+            if token != "^":
+                smi += token
+        try:
+            smi = selfies.decoder(smi)
+        except:
+            smi = None
+        return smi
+
+
 def create_vocabulary(smiles_list, tokenizer):
     """Creates a vocabulary for the SMILES syntax."""
     tokens = set()
@@ -129,7 +209,7 @@ def create_vocabulary(smiles_list, tokenizer):
 
 
 def update_vocabulary(vocabulary, smiles_list, tokenizer):
-    """Creates a vocabulary for the SMILES syntax."""
+    """Updates a vocabulary for the SMILES syntax."""
     tokens = set()
     for smi in smiles_list:
         tokens.update(tokenizer.tokenize(smi, with_begin_and_end=False))
