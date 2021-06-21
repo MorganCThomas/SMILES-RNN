@@ -33,6 +33,9 @@ def main(args):
     logger.info(f'Loading models')
     prior = Model.load_from_file(file_path=args.prior, sampling_mode=True, device=device)
     agent = Model.load_from_file(file_path=args.agent, sampling_mode=False, device=device)
+    if args.rl_mode in ['A2C', 'PPO']:
+        agent.RNN2Critic()
+
 
     # Freeze layers (embedding + 4 parameters per RNN layer)
     if args.freeze is not None:
@@ -47,9 +50,14 @@ def main(args):
     # Start training
     for step in tqdm(range(args.n_steps), total=args.n_steps):
 
-        seqs, smiles, agent_likelihood = agent.sample_sequences_and_smiles(args.batch_size)
-        agent_likelihood = -agent_likelihood
-        prior_likelihood = -prior.likelihood(seqs)
+        # Sample
+        if args.rl_mode in ['A2C', 'PPO']:
+            seqs, smiles, agent_likelihood, critic_values = agent.sample_sequences_and_smiles_and_values(args.batch_size)
+        else:
+            seqs, smiles, agent_likelihood = agent.sample_sequences_and_smiles(args.batch_size)
+        prior_likelihood = prior.likelihood(seqs)
+
+        # Score
         try:
             scores = ms(smiles)
         except:
@@ -59,24 +67,41 @@ def main(args):
             ms.kill_dash_monitor()
             raise
 
+        # Compute loss
+        if args.rl_mode == 'PG':
+            loss = agent_likelihood * utils.to_tensor(scores)
+            loss = loss.mean()
+
+        if args.rl_mode == 'A2C':
+            advantage = torch.abs(utils.to_tensor(scores) - critic_values)
+            loss = agent_likelihood * advantage + torch.pow(advantage, 2)
+            loss = loss.mean()
+
+        if args.rl_mode == 'PPO':
+            advantage = torch.abs(utils.to_tensor(scores) - critic_values)
+            ratio = torch.exp(agent_likelihood - prior_likelihood)
+            surr1 = ratio * advantage
+            surr2 = torch.clamp(ratio, 1.0 - 0.2,  # clip param 0.2 for now, regularize distance from prior
+                                1.0 + 0.2) * advantage
+            loss = torch.min(surr1, surr2).mean()  # Negative ?
+
         if args.rl_mode == 'reinvent':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
-            loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
+            loss = torch.pow((augmented_likelihood - agent_likelihood), 2).mean()
 
         if args.rl_mode == 'augHC':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
             aughc_likelihood = augmented_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
             agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2)
+            loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2).mean()
 
         if args.rl_mode == 'HC':
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
             agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = - agenthc_likelihood.mean()
+            loss = agenthc_likelihood.mean()
 
         # Update
-        loss = loss.mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -107,7 +132,7 @@ def get_args():
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
     optional.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     optional.add_argument('-rl', '--rl_mode', type=str, default='reinvent',
-                          choices=['reinvent', 'augHC', 'HC'],
+                          choices=['reinvent', 'augHC', 'HC', 'PG', 'A2C', 'PPO'],
                           help='Which reinforcement learning algorithm to use')
     optional.add_argument('--save_freq', type=int, default=100, help='How often to save models')
     return parser.parse_args()
