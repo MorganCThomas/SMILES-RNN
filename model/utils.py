@@ -58,10 +58,10 @@ def save_smiles(smiles, file_path):
     if any(['gz' in ext for ext in os.path.basename(file_path).split('.')[1:]]):
         logger.debug('\'gz\' found in file path: using gzip')
         with gzip.open(file_path, 'wb') as f:
-            _ = [f.write((smi+'\n').encode('utf-8')) for smi in smiles]
+            _ = [f.write((smi+'\n').encode('utf-8')) for smi in smiles if smi is not None]
     else:
         with open(file_path, 'wt') as f:
-            _ = [f.write(smi+'\n') for smi in smiles]
+            _ = [f.write(smi+'\n') for smi in smiles if smi is not None]
     return
 
 

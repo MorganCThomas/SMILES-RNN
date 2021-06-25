@@ -34,8 +34,7 @@ def main(args):
     smiles, _ = model.sample_smiles(num=args.number)
 
     # Save
-    with open(args.output, 'wt') as f:
-        _ = [f.write(smi+'\n') for smi in smiles]
+    utils.save_smiles(smiles, args.output)
     return
 
 
