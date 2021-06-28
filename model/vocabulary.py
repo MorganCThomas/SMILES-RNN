@@ -175,7 +175,7 @@ class DeepSMILESTokenizer:
             smi = None
         return smi
 
-    def compress(dsmi):
+    def compress(self, dsmi):
         """
         > compress("C)C")
         'C)1C'
@@ -198,7 +198,7 @@ class DeepSMILESTokenizer:
             i += 1
         return "".join(compressed)
 
-    def decompress(cdsmi):
+    def decompress(self, cdsmi):
         """
         > decompress("C)1C")
         'C)C'
