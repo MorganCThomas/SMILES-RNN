@@ -5,6 +5,7 @@ import argparse
 import logging
 from tqdm.auto import tqdm
 from rdkit import rdBase
+from itertools import chain
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -12,6 +13,7 @@ from model.vocabulary import *
 from model.model import *
 from model.dataset import *
 from model import utils
+from randomize_smiles import randomize_smiles
 
 rdBase.DisableLog("rdApp.error")
 
@@ -43,6 +45,13 @@ def main(args):
     # Load smiles
     logger.info('Loading smiles')
     train_smiles = utils.read_smiles(args.train_smiles)
+    # Augment by randomization
+    if args.randomize:
+        logger.info(f'Randomizing {len(train_smiles)} training smiles')
+        train_smiles = [randomize_smiles(smi) for smi in tqdm(train_smiles) if randomize_smiles(smi) is not None]
+        train_smiles = list(chain.from_iterable(train_smiles))
+        logger.info(f'Returned {len(train_smiles)} randomized training smiles')
+    # Load other smiles
     all_smiles = train_smiles
     if args.valid_smiles is not None:
         valid_smiles = utils.read_smiles(args.valid_smiles)
@@ -56,6 +65,10 @@ def main(args):
         tokenizer = SMILESTokenizer()
     if args.grammar == 'deepSMILES':
         tokenizer = DeepSMILESTokenizer()
+    if args.grammar == 'deepSMILES_r':
+        tokenizer = DeepSMILESTokenizer(rings=True, branches=False)
+    if args.grammar == 'deepSMILES_b':
+        tokenizer = DeepSMILESTokenizer(rings=False, branches=True)
     if args.grammar == 'SELFIES':
         tokenizer = SELFIESTokenizer()
 
@@ -162,8 +175,11 @@ def get_args():
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files')
 
     optional = parser.add_argument_group('Optional arguments')
-    optional.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'SELFIES'], default='SMILES',
+    optional.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_b', 'SELFIES'],
+                          default='SMILES',
                           help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
+    optional.add_argument('--randomize', action='store_true',
+                          help='Training smiles will be randomized using default arguments (10 restricted)')
     optional.add_argument('--valid_smiles', help='Validation smiles')
     optional.add_argument('--test_smiles', help='Test smiles')
     optional.add_argument('--validate_frequency', default=500, help=' ')

@@ -130,7 +130,9 @@ class DeepSMILESTokenizer:
         "brcl": re.compile(r"(Br|Cl)")
     }
     REGEXP_ORDER = ["brackets", "brcl"]
-    converter = deepsmiles.Converter(rings=True, branches=True)
+
+    def __init__(self, rings=True, branches=True):
+        self.converter = deepsmiles.Converter(rings=rings, branches=branches)
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to deepSMILES"""

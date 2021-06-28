@@ -4,6 +4,7 @@ import argparse
 import logging
 from tqdm.auto import tqdm
 from rdkit import rdBase
+from itertools import chain
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -11,6 +12,7 @@ from model.vocabulary import *
 from model.model import *
 from model.dataset import *
 from model import utils
+from randomize_smiles import randomize_smiles
 
 rdBase.DisableLog("rdApp.error")
 
@@ -38,6 +40,12 @@ def main(args):
     # Load smiles
     logger.info('Loading smiles')
     tune_smiles = utils.read_smiles(args.tune_smiles)
+    # Augment by randomization
+    if args.randomize:
+        logger.info(f'Randomizing {len(tune_smiles)} training smiles')
+        tune_smiles = [randomize_smiles(smi) for smi in tqdm(tune_smiles) if randomize_smiles(smi) is not None]
+        tune_smiles = list(chain.from_iterable(tune_smiles))
+        logger.info(f'Returned {len(tune_smiles)} randomized training smiles')
     if args.valid_smiles is not None:
         valid_smiles = utils.read_smiles(args.valid_smiles)
     if args.test_smiles is not None:
@@ -143,11 +151,13 @@ def get_args():
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files', required=True)
 
     optional = parser.add_argument_group('Optional arguments')
-    optional.add_argument('--valid_smiles')
-    optional.add_argument('--test_smiles')
-    optional.add_argument('--n_epochs', type=int, default=20)
-    optional.add_argument('--batch_size', type=int, default=128)
-    optional.add_argument('-d', '--device', default='gpu')
+    optional.add_argument('--randomize', action='store_true',
+                          help='Training smiles will be randomized using default arguments (10 restricted)')
+    optional.add_argument('--valid_smiles', help='Validation smiles')
+    optional.add_argument('--test_smiles', help='Test smiles')
+    optional.add_argument('--n_epochs', type=int, default=10, help=' ')
+    optional.add_argument('--batch_size', type=int, default=128, help=' ')
+    optional.add_argument('-d', '--device', default='gpu', help='cpu/gpu or device number')
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
     return parser.parse_args()
 
