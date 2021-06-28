@@ -67,8 +67,12 @@ def main(args):
         tokenizer = DeepSMILESTokenizer()
     if args.grammar == 'deepSMILES_r':
         tokenizer = DeepSMILESTokenizer(rings=True, branches=False)
+    if args.grammar == 'deepSMILES_c':
+        tokenizer = DeepSMILESTokenizer(rings=True, branches=False, compress=True)
     if args.grammar == 'deepSMILES_b':
         tokenizer = DeepSMILESTokenizer(rings=False, branches=True)
+    if args.grammar == 'deepSMILES_cb':
+        tokenizer = DeepSMILESTokenizer(rings=False, branches=True, compress=True)
     if args.grammar == 'SELFIES':
         tokenizer = SELFIESTokenizer()
 
@@ -175,7 +179,8 @@ def get_args():
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files')
 
     optional = parser.add_argument_group('Optional arguments')
-    optional.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_b', 'SELFIES'],
+    optional.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_c',
+                                                'deepSMILES_cb', 'deepSMILES_b', 'SELFIES'],
                           default='SMILES',
                           help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
     optional.add_argument('--randomize', action='store_true',

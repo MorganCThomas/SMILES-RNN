@@ -131,12 +131,15 @@ class DeepSMILESTokenizer:
     }
     REGEXP_ORDER = ["brackets", "brcl"]
 
-    def __init__(self, rings=True, branches=True):
+    def __init__(self, rings=True, branches=True, compress=False):
         self.converter = deepsmiles.Converter(rings=rings, branches=branches)
+        self.run_compression = compress
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to deepSMILES"""
         data = self.converter.encode(data)
+        if self.run_compression:
+            data = self.compress(data)
 
         def split_by(data, regexps):
             if not regexps:
@@ -165,10 +168,70 @@ class DeepSMILESTokenizer:
             if token != "^":
                 smi += token
         try:
+            if self.run_compression:
+                smi = self.decompress(smi)
             smi = self.converter.decode(smi)
         except: # deepsmiles.DecodeError doesn't capture IndexError?
             smi = None
         return smi
+
+    def compress(dsmi):
+        """
+        > compress("C)C")
+        'C)1C'
+        > compress("C)))C")
+        'C)3C'
+        > compress("C))))))))))C")
+        'C)10C'
+        """
+        compressed = []
+        N = len(dsmi)
+        i = 0
+        while i < N:
+            x = dsmi[i]
+            compressed.append(x)
+            if x == ')':
+                start = i
+                while i + 1 < N and dsmi[i + 1] == ')':
+                    i += 1
+                compressed.append(str(i + 1 - start))
+            i += 1
+        return "".join(compressed)
+
+    def decompress(cdsmi):
+        """
+        > decompress("C)1C")
+        'C)C'
+        > decompress("C)3C")
+        'C)))C'
+        > decompress("C)10C")
+        'C))))))))))C'
+        > decompress("C)C")
+        Traceback (most recent call last):
+            ...
+        ValueError: A number should follow the parenthesis in C)C
+        > decompress("C)")
+        Traceback (most recent call last):
+            ...
+        ValueError: A number should follow the parenthesis in C)
+        """
+        decompressed = []
+        N = len(cdsmi)
+        i = 0
+        while i < N:
+            x = cdsmi[i]
+            if x == ')':
+                start = i
+                while i + 1 < N and cdsmi[i + 1].isdigit():
+                    i += 1
+                if i == start:
+                    raise ValueError(f"A number should follow the parenthesis in {cdsmi}")
+                number = int(cdsmi[start + 1:i + 1])
+                decompressed.append(")" * number)
+            else:
+                decompressed.append(x)
+            i += 1
+        return "".join(decompressed)
 
 
 class SELFIESTokenizer:
