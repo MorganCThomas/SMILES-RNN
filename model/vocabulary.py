@@ -159,7 +159,7 @@ class DeepSMILESTokenizer:
             tokens = ["^"] + tokens + ["$"]
         return tokens
 
-    def untokenize(self, tokens):
+    def untokenize(self, tokens, convert_to_smiles=True):
         """Untokenizes a deepSMILES string followed by conversion to SMILES"""
         smi = ""
         for token in tokens:
@@ -167,12 +167,13 @@ class DeepSMILESTokenizer:
                 break
             if token != "^":
                 smi += token
-        try:
-            if self.run_compression:
-                smi = self.decompress(smi)
-            smi = self.converter.decode(smi)
-        except: # deepsmiles.DecodeError doesn't capture IndexError?
-            smi = None
+        if convert_to_smiles:
+            try:
+                if self.run_compression:
+                    smi = self.decompress(smi)
+                smi = self.converter.decode(smi)
+            except: # deepsmiles.DecodeError doesn't capture IndexError?
+                smi = None
         return smi
 
     def compress(self, dsmi):
@@ -247,7 +248,7 @@ class SELFIESTokenizer:
             tokens = ["^"] + tokens + ["$"]
         return tokens
 
-    def untokenize(self, tokens):
+    def untokenize(self, tokens, convert_to_smiles=True):
         """Untokenizes a deepSMILES string followed by conversion to SMILES"""
         smi = ""
         for token in tokens:
@@ -255,10 +256,11 @@ class SELFIESTokenizer:
                 break
             if token != "^":
                 smi += token
-        try:
-            smi = selfies.decoder(smi)
-        except:
-            smi = None
+        if convert_to_smiles:
+            try:
+                smi = selfies.decoder(smi)
+            except:
+                smi = None
         return smi
 
 
