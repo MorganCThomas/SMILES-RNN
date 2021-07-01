@@ -110,7 +110,7 @@ class SMILESTokenizer:
             tokens = ["^"] + tokens + ["$"]
         return tokens
 
-    def untokenize(self, tokens):
+    def untokenize(self, tokens, **kwargs):
         """Untokenizes a SMILES string."""
         smi = ""
         for token in tokens:
