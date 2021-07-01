@@ -55,7 +55,8 @@ def main(args):
             seqs, smiles, agent_likelihood, critic_values = agent.sample_sequences_and_smiles_and_values(args.batch_size)
         else:
             seqs, smiles, agent_likelihood = agent.sample_sequences_and_smiles(args.batch_size)
-        prior_likelihood = prior.likelihood(seqs)
+        agent_likelihood = - agent_likelihood
+        prior_likelihood = - prior.likelihood(seqs)
 
         # Score
         try:
@@ -73,17 +74,17 @@ def main(args):
             loss = loss.mean()
 
         if args.rl_mode == 'A2C':
-            advantage = torch.abs(utils.to_tensor(scores) - critic_values)
+            advantage = utils.to_tensor(scores) - critic_values
             loss = agent_likelihood * advantage + torch.pow(advantage, 2)
             loss = loss.mean()
 
         if args.rl_mode == 'PPO':
-            advantage = torch.abs(utils.to_tensor(scores) - critic_values)
+            advantage = utils.to_tensor(scores) - critic_values
             ratio = torch.exp(agent_likelihood - prior_likelihood)
             surr1 = ratio * advantage
             surr2 = torch.clamp(ratio, 1.0 - 0.2,  # clip param 0.2 for now, regularize distance from prior
                                 1.0 + 0.2) * advantage
-            loss = torch.min(surr1, surr2).mean()  # Negative ?
+            loss = torch.min(surr1, surr2).mean()
 
         if args.rl_mode == 'reinvent':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
