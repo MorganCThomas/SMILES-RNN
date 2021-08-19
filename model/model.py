@@ -2,7 +2,7 @@
 Adaption of RNN model from https://github.com/MolecularAI/Reinvent
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
@@ -243,6 +243,85 @@ class Model:
         log_probs = logits.log_softmax(dim=2)
         return self._nll_loss(log_probs.transpose(1, 2), sequences[:, 1:]).sum(dim=1)
 
+    def probabilities(self, sequences) -> torch.Tensor:
+        """
+        Retrieves the probabilities of a given sequence.
+
+        :param sequences: (batch_size, sequence_length) A batch of sequences
+        :return:
+          (batch_size, sequence length) Probabilities for each example.
+          (batch_size, sequence length) Log probabilities for each example.
+        """
+        logits, critic_values, _ = self.network(sequences[:, :])
+        probs = logits.softmax(dim=2)
+        log_probs = logits.log_softmax(dim=2)
+        action_probs = torch.zeros(sequences[:, :].shape)
+        action_log_probs = torch.zeros(sequences[:, :].shape)
+        for i, (seq, prob, log_prob) in enumerate(zip(sequences[:, :], probs, log_probs)):
+            for t, (a, p, lp) in enumerate(zip(seq, prob, log_prob)):
+                action_probs[i, t] = p[a]
+                action_log_probs[i, t] = lp[a]
+        return action_probs, action_log_probs, critic_values
+
+    def entropy(self, sequences) -> torch.Tensor:
+        """
+        Retrieves the entropy of a given sequence.
+
+        :param sequences: (batch_size, sequence_length) A batch of sequences
+        :return:  (batch_size) Entropy for each example.
+        """
+        logits, _, _ = self.network(sequences[:, :-1])  # all steps done at once
+        probs = logits.log_softmax(dim=2)
+        log_probs = logits.softmax(dim=2)
+        entropies = torch.zeros(probs.shape[0])
+        # Non-padding characters i.e. seq == 0
+        for i, (seq, prob, log_prob) in enumerate(zip(sequences[:, :-1], probs, log_probs)):
+            seq_entropies = []
+            for s, p, lp in zip(seq, prob, log_prob):
+                if s != 0:
+                    seq_entropies.append(-torch.sum(lp * p))
+            entropies[i] = torch.tensor(seq_entropies).mean()
+        return entropies
+
+    def value_loss(self, sequences, advantage) -> torch.Tensor:
+        """
+        Given sequence and advantage, calculate the loss of non-padding characters.
+        :param sequences: (batch_size, sequence_length) A batch of sequences
+        :param advantage: (batch_size) Value loss for each example.
+        :return:
+        """
+        value_loss = torch.zeros(advantage.shape[0])
+        # Non-padding characters i.e. seq == 0
+        for i, (seq, adv) in enumerate(zip(sequences[:, :-1], advantage)):
+            seq_adv = []
+            for s, a in zip(seq, adv):
+                if s != 0:
+                    seq_adv.append(a)
+            value_loss[i] = torch.tensor(seq_adv).pow(2).mean()
+        return value_loss
+
+    def kl(self, sequences, prior) -> torch.Tensor:
+        """
+        Retrieves the kl divergence of a given sequence and prior.
+
+        :param sequences: (batch_size, sequence_length) A batch of sequences
+        :param prior: A prior model
+        :return:  (batch_size) Entropy for each example.
+        """
+        logits, _, _ = self.network(sequences[:, :-1])  # all steps done at once
+        prior_logits, _, _ = prior.network(sequences[:, :-1])  # all steps done at once
+        probs = logits.softmax(dim=2)
+        prior_probs = prior_logits.softmax(dim=2)
+        kls = torch.zeros(probs.shape[0])
+        # Non-padding characters i.e. seq == 0
+        for i, (seq, prob, prior_prob) in enumerate(zip(sequences[:, :-1], probs, prior_probs)):
+            seq_kls = []
+            for s, p, pp in zip(seq, prob, prior_prob):
+                if s != 0:
+                    seq_kls.append(torch.sum(p * (p/pp).log()))
+            kls[i] = torch.tensor(seq_kls).mean()
+        return kls
+
     def sample_native(self, num=128, batch_size=128) -> Tuple[List, np.array]:
         """
         Samples n strings from the model according to the native grammar.
@@ -259,7 +338,7 @@ class Model:
         for size in batch_sizes:
             if not size:
                 break
-            seqs, likelihoods, _ = self._sample(batch_size=size)
+            seqs, likelihoods, _, _, _ = self._sample(batch_size=size)
             smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
                       for seq in seqs.cpu().numpy()]
 
@@ -285,7 +364,7 @@ class Model:
         for size in batch_sizes:
             if not size:
                 break
-            seqs, likelihoods, _ = self._sample(batch_size=size)
+            seqs, likelihoods, _, _, _ = self._sample(batch_size=size)
             smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
 
             smiles_sampled.extend(smiles)
@@ -294,10 +373,11 @@ class Model:
             del seqs, likelihoods
         return smiles_sampled, np.concatenate(likelihoods_sampled)
 
-    def sample_sequences_and_smiles(self, batch_size=128) -> Tuple[torch.Tensor, List, torch.Tensor]:
-        seqs, likelihoods, _ = self._sample(batch_size=batch_size)
+    def sample_sequences_and_smiles(self, batch_size=128) ->\
+            Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
+        seqs, likelihoods, probs, log_probs, values = self._sample(batch_size=batch_size)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
-        return seqs, smiles, likelihoods
+        return seqs, smiles, likelihoods, probs, log_probs, values
 
     def sample_sequences_and_smiles_and_values(self, batch_size=128) -> Tuple[torch.Tensor, List,
                                                                               torch.Tensor, torch.Tensor]:
@@ -309,37 +389,19 @@ class Model:
         self.network = RNNCritic(self.network)
 
     # @torch.no_grad()
-    def _sample(self, batch_size=128, temperature=1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _sample(self, batch_size=128, temperature=1.0) -> \
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         start_token = torch.zeros(batch_size, dtype=torch.long)
         start_token[:] = self.vocabulary["^"]
         input_vector = start_token
         sequences = [self.vocabulary["^"] * torch.ones([batch_size, 1], dtype=torch.long)]
+        action_probs = [torch.zeros([batch_size, 1], dtype=torch.float, requires_grad=True)]
+        action_log_probs = [torch.zeros([batch_size, 1], dtype=torch.float, requires_grad=True)]
+        values = [torch.zeros([batch_size, 1], dtype=torch.float, requires_grad=True)]\
+            if self.network._get_name() == 'RNNCritic' else None
         # NOTE: The first token never gets added in the loop so the sequences are initialized with a start token
         hidden_state = None
         nlls = torch.zeros(batch_size)
-        for _ in range(self.max_sequence_length - 1):
-            logits, _, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
-            logits = logits.squeeze(1) / temperature
-            probabilities = logits.softmax(dim=1)
-            log_probs = logits.log_softmax(dim=1)
-            input_vector = torch.multinomial(probabilities, 1).view(-1)
-            sequences.append(input_vector.view(-1, 1))
-            nlls += self._nll_loss(log_probs, input_vector)
-            if input_vector.sum() == 0:
-                break
-
-        sequences = torch.cat(sequences, 1)
-        return sequences.data, nlls, None
-
-    def _sample_critic(self, batch_size=128, temperature=1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        start_token = torch.zeros(batch_size, dtype=torch.long)
-        start_token[:] = self.vocabulary["^"]
-        input_vector = start_token
-        sequences = [self.vocabulary["^"] * torch.ones([batch_size, 1], dtype=torch.long)]
-        # NOTE: The first token never gets added in the loop so the sequences are initialized with a start token
-        hidden_state = None
-        nlls = torch.zeros(batch_size)
-        values = torch.zeros(batch_size)
         for _ in range(self.max_sequence_length - 1):
             logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
             logits = logits.squeeze(1) / temperature
@@ -347,12 +409,45 @@ class Model:
             log_probs = logits.log_softmax(dim=1)
             input_vector = torch.multinomial(probabilities, 1).view(-1)
             sequences.append(input_vector.view(-1, 1))
+            action_probs.append(torch.tensor([p[a] for p, a in zip(probabilities, input_vector)]).view(-1, 1))
+            action_log_probs.append(torch.tensor([p[a] for p, a in zip(log_probs, input_vector)]).view(-1, 1))
+            if self.network._get_name() == 'RNNCritic':
+                values.append(value.view(-1, 1))
             nlls += self._nll_loss(log_probs, input_vector)
-            values += value.squeeze(1)  # Taking the sum of all values here?
+            if input_vector.sum() == 0:  # If all sequences terminate, finish.
+                break
+
+        sequences = torch.cat(sequences, 1)
+        action_probs = torch.cat(action_probs, 1)
+        action_log_probs = torch.cat(action_log_probs, 1)
+        if self.network._get_name() == 'RNNCritic':
+            values = torch.cat(values, 1)
+        return sequences.data, nlls, action_probs, action_log_probs, values
+
+    def _sample_critic(self, batch_size=128, temperature=1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        start_token = torch.zeros(batch_size, dtype=torch.long)
+        start_token[:] = self.vocabulary["^"]
+        input_vector = start_token
+        sequences = [self.vocabulary["^"] * torch.ones([batch_size, 1], dtype=torch.long)]
+        if self.network._get_name() == 'RNNCritic':
+            values = [torch.zeros([batch_size, 1], dtype=torch.long)]
+        # NOTE: The first token never gets added in the loop so the sequences are initialized with a start token
+        hidden_state = None
+        nlls = torch.zeros(batch_size)
+        for _ in range(self.max_sequence_length - 1):
+            logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
+            logits = logits.squeeze(1) / temperature
+            probabilities = logits.softmax(dim=1)
+            log_probs = logits.log_softmax(dim=1)
+            input_vector = torch.multinomial(probabilities, 1).view(-1)
+            sequences.append(input_vector.view(-1, 1))
+            values.append(value.view(-1, 1))
+            nlls += self._nll_loss(log_probs, input_vector)
             if input_vector.sum() == 0:
                 break
 
         sequences = torch.cat(sequences, 1)
+        values = torch.cat(values, 1)
         return sequences.data, nlls, values
 
     def _beam_search(self, k) -> Tuple[torch.Tensor, torch.Tensor]:

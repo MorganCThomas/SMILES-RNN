@@ -1,6 +1,7 @@
 import os
 import argparse
 import logging
+import json
 from tqdm.auto import tqdm
 from rdkit import rdBase
 
@@ -25,17 +26,21 @@ def main(args):
     logger.info(f'Device set to {device.type}')
 
     # Scoring_function
-    ms = MolScore(model_name='reinvent', task_config=args.molscore_config)
-    ms.log_parameters({'optimization': args.rl_mode, 'batch_size': args.batch_size, 'sigma': args.sigma,
-                       'prior': os.path.basename(args.prior), 'init_agent': os.path.basename(args.agent)})
+    ms = MolScore(model_name='SMILES-RNN', task_config=args.molscore_config)
+    ms.log_parameters({k: vars(args)[k] for k in
+                       ['prior', 'agent', 'batch_size', 'rl_mode', 'sigma', 'kl_coefficient', 'entropy_coefficient']
+                       if k in vars(args).keys()})
+
+    # Also save these parameters for good measure
+    with open(os.path.join(ms.save_dir, 'SMILES-RNN.params'), 'wt') as f:
+        json.dump(vars(args), f)
 
     # Load model
     logger.info(f'Loading models')
     prior = Model.load_from_file(file_path=args.prior, sampling_mode=True, device=device)
     agent = Model.load_from_file(file_path=args.agent, sampling_mode=False, device=device)
-    if args.rl_mode in ['A2C', 'PPO']:
+    if args.rl_mode in ['A2C', 'A2C-reg', 'PPO', 'PPO-reg']:
         agent.RNN2Critic()
-
 
     # Freeze layers (embedding + 4 parameters per RNN layer)
     if args.freeze is not None:
@@ -44,17 +49,14 @@ def main(args):
             if i < n_freeze:  # Freeze parameter
                 param.requires_grad = False
 
-    # Setup optimizer
-    optimizer = torch.optim.Adam(agent.network.parameters(), lr=0.0005)
+    # Setup optimizer and learning rate
+    optimizer = torch.optim.Adam(agent.network.parameters(), lr=args.learning_rate)
 
     # Start training
     for step in tqdm(range(args.n_steps), total=args.n_steps):
 
         # Sample
-        if args.rl_mode in ['A2C', 'PPO']:
-            seqs, smiles, agent_likelihood, critic_values = agent.sample_sequences_and_smiles_and_values(args.batch_size)
-        else:
-            seqs, smiles, agent_likelihood = agent.sample_sequences_and_smiles(args.batch_size)
+        seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(args.batch_size)
         agent_likelihood = - agent_likelihood
         prior_likelihood = - prior.likelihood(seqs)
 
@@ -70,39 +72,84 @@ def main(args):
 
         # Compute loss
         if args.rl_mode == 'PG':
-            loss = agent_likelihood * utils.to_tensor(scores)
-            loss = loss.mean()
+            policy = torch.zeros(log_probs.shape)
+            for i, (prob, reward) in enumerate(zip(log_probs, utils.to_tensor(scores))):
+                policy[i, :] = prob * reward
+            loss = policy.mean(dim=1)
+
+        if args.rl_mode == 'PG-reg':
+            policy = torch.zeros(log_probs.shape)
+            for i, (prob, reward) in enumerate(zip(log_probs, utils.to_tensor(scores))):
+                policy[i, :] = prob * reward
+            loss = policy.mean(dim=1) + (args.entropy_coefficient * agent.entropy(seqs)) +\
+                   (args.kl_coefficient * agent.kl(seqs, prior))
 
         if args.rl_mode == 'A2C':
-            advantage = utils.to_tensor(scores) - critic_values
-            loss = agent_likelihood * advantage + torch.pow(advantage, 2)
-            loss = loss.mean()
+            rewards = torch.zeros(critic_values.shape)
+            for i in range(args.batch_size):
+                rewards[i, :] = utils.to_tensor(scores)[i]
+            advantage = rewards - critic_values
+            policy = torch.zeros(log_probs.shape)
+            for i, (prob, adv) in enumerate(zip(log_probs, advantage)):
+                policy[i, :] = (prob * adv) + torch.pow(adv, 2)
+            loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage))
+
+        if args.rl_mode == 'A2C-reg':
+            rewards = torch.zeros(critic_values.shape)
+            for i in range(args.batch_size):
+                rewards[i, :] = utils.to_tensor(scores)[i]
+            advantage = rewards - critic_values
+            policy = torch.zeros(log_probs.shape)
+            for i, (prob, adv) in enumerate(zip(log_probs, advantage)):
+                policy[i, :] = (prob * adv) + torch.pow(adv, 2)
+            loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage)) -\
+                   (args.entropy_coefficient * agent.entropy(seqs)) + (args.kl_coefficient * agent.kl(seqs, prior))
 
         if args.rl_mode == 'PPO':
-            advantage = utils.to_tensor(scores) - critic_values
-            ratio = torch.exp(agent_likelihood - prior_likelihood)
-            surr1 = ratio * advantage
-            surr2 = torch.clamp(ratio, 1.0 - 0.2,  # clip param 0.2 for now, regularize distance from prior
-                                1.0 + 0.2) * advantage
-            loss = torch.min(surr1, surr2).mean()
+            # TODO as ppo_epochs, episode_size, episode_epochs, batch_size
+            old_probs, old_log_probs, _ = prior.probabilities(seqs)
+            rewards = torch.zeros(critic_values.shape)
+            for i in range(args.batch_size):
+                rewards[i, :] = utils.to_tensor(scores)[i]
+            advantage = rewards - critic_values
+            ratio = (probs / old_probs)
+            policy = torch.zeros(probs.shape)
+            for i, (rat, adv) in enumerate(zip(ratio, advantage)):
+                policy[i, :] = -torch.min((rat * adv), torch.clip(rat, 1-0.2, 1+0.2) * adv)
+            loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage))
+
+        if args.rl_mode == 'PPO-reg':
+            old_probs, old_log_probs, _ = prior.probabilities(seqs)
+            rewards = torch.zeros(critic_values.shape)
+            for i in range(args.batch_size):
+                rewards[i, :] = utils.to_tensor(scores)[i]
+            advantage = rewards - critic_values
+            ratio = (probs / old_probs)
+            policy = torch.zeros(probs.shape)
+            for i, (rat, adv) in enumerate(zip(ratio, advantage)):
+                policy[i, :] = -torch.min((rat * adv), torch.clip(rat, 1 - 0.2, 1 + 0.2) * adv)
+            loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage)) -\
+                   (args.entropy_coefficient * agent.entropy(seqs)) + (args.kl_coefficient * agent.kl(seqs, prior))
 
         if args.rl_mode == 'reinvent':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
-            loss = torch.pow((augmented_likelihood - agent_likelihood), 2).mean()
+            loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
 
         if args.rl_mode == 'augHC':
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
             aughc_likelihood = augmented_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
             agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2).mean()
+            loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2)
 
         if args.rl_mode == 'HC':
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
             agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = agenthc_likelihood.mean()
+            loss = agenthc_likelihood
 
         # Update
+        loss = loss.mean()
+        print(f'    Loss: {loss.data:.03f}')
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -131,11 +178,61 @@ def get_args():
     optional.add_argument('--n_steps', type=int, default=200, help=' ')
     optional.add_argument('-d', '--device', default='gpu', help=' ')
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
-    optional.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
-    optional.add_argument('-rl', '--rl_mode', type=str, default='reinvent',
-                          choices=['reinvent', 'augHC', 'HC', 'PG', 'A2C', 'PPO'],
-                          help='Which reinforcement learning algorithm to use')
     optional.add_argument('--save_freq', type=int, default=100, help='How often to save models')
+
+    subparsers = parser.add_subparsers(title='Optimization algorithms', dest='rl_mode',
+                                       help='Which reinforcement learning algorithm to use')
+
+    reinvent_parser = subparsers.add_parser('reinvent')
+    reinvent_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    reinvent_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    augHC_parser = subparsers.add_parser('augHC')
+    augHC_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    augHC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    HC_parser = subparsers.add_parser('HC')
+    # TODO add top k
+    HC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    PG_parser = subparsers.add_parser('PG')
+    PG_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
+
+    PGr_parser = subparsers.add_parser('PG-reg')
+    PGr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0,
+                            help='Coefficient of entropy loss contribution')
+    PGr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=10,
+                            help='Coefficient of KL loss contribution')
+    PGr_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
+
+    A2C_parser = subparsers.add_parser('A2C')
+    A2C_parser.add_argument('-vlc', '--value_coefficient', type=float, default=0.5,
+                            help='Coefficient of value loss contribution')
+    A2C_parser.add_argument('-lr', '--learning_rate', type=float, default=4e-4, help='Adam learning rate')
+
+    A2Cr_parser = subparsers.add_parser('A2C-reg')
+    A2Cr_parser.add_argument('-vlc', '--value_coefficient', type=float, default=0.5,
+                             help='Coefficient of value loss contribution')
+    A2Cr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0.013,
+                             help='Coefficient of entropy loss contribution')
+    A2Cr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=0,
+                             help='Coefficient of KL loss contribution')
+    A2Cr_parser.add_argument('-lr', '--learning_rate', type=float, default=4e-4, help='Adam learning rate')
+
+    PPO_parser = subparsers.add_parser('PPO')
+    PPO_parser.add_argument('-vlc', '--value_coefficient', type=float, default=0.5,
+                            help='Coefficient of value loss contribution')
+    PPO_parser.add_argument('-lr', '--learning_rate', type=float, default=4e-4, help='Adam learning rate')
+
+    PPOr_parser = subparsers.add_parser('PPO-reg')
+    PPOr_parser.add_argument('-vlc', '--value_coefficient', type=float, default=0.5,
+                             help='Coefficient of value loss contribution')
+    PPOr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0.013,
+                             help='Coefficient of entropy loss contribution')
+    PPOr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=0,
+                             help='Coefficient of KL loss contribution')
+    PPOr_parser.add_argument('-lr', '--learning_rate', type=float, default=4e-4, help='Adam learning rate')
+
     return parser.parse_args()
 
 
