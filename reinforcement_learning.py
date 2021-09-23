@@ -188,7 +188,7 @@ def get_args():
     reinvent_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     augHC_parser = subparsers.add_parser('augHC')
-    augHC_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    augHC_parser.add_argument('-s', '--sigma', type=int, default=30, help='Scaling coefficient of score')
     augHC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     HC_parser = subparsers.add_parser('HC')
