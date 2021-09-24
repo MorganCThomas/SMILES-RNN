@@ -145,7 +145,7 @@ def main(args):
         if args.rl_mode == 'HC':
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
             agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = agenthc_likelihood
+            loss = -agenthc_likelihood
 
         # Update
         loss = loss.mean()
