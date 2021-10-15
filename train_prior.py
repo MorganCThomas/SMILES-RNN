@@ -113,7 +113,7 @@ def main(args):
         logger.info(f'Epoch {e}')
         for step, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
             # Update total step
-            global_step += step
+            global_step += 1
 
             # Sample from DataLoader
             input_vectors = batch.long()
