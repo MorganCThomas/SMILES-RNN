@@ -1,4 +1,5 @@
 import os
+import time
 import json
 from os import path
 import argparse
@@ -109,6 +110,7 @@ def main(args):
     # Train model
     logger.info('Beginning training')
     global_step = 0
+    start_time = time.time()
     for e in range(1, args.n_epochs+1):
         logger.info(f'Epoch {e}')
         for step, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
@@ -189,6 +191,16 @@ def main(args):
 
         # Save every epoch
         prior.save(file=path.join(args.output_directory, f'Prior_{args.suffix}_Epoch-{e}.ckpt'))
+
+    # Add training time
+    end_time = time.time()
+    training_time = (end_time - start_time) / 60  # in minutes
+    # Add this to params
+    with open(os.path.join(args.output_directory, 'params.json'), 'r+') as f:
+        params = json.load(f)
+        params.update({'total_time_mins': training_time})
+        params.update({'epoch_time_mins': training_time/args.n_epochs})
+        json.dump(params, f)
 
 
 def get_args():
