@@ -104,13 +104,17 @@ def main(args):
                   network_params=network_params, max_sequence_length=256, device=device)
 
     # Setup optimizer TODO update to adaptive learning
-    optimizer = torch.optim.Adam(prior.network.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(prior.network.parameters(), lr=args.learning_rate)
 
     # Train model
     logger.info('Beginning training')
+    global_step = 0
     for e in range(1, args.n_epochs+1):
         logger.info(f'Epoch {e}')
         for step, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
+            # Update total step
+            global_step += step
+
             # Sample from DataLoader
             input_vectors = batch.long()
 
@@ -138,6 +142,7 @@ def main(args):
                     # Sample new molecules
                     sampled_smiles, sampled_likelihood = prior.sample_smiles()
                     validity, mols = utils.fraction_valid_smiles(sampled_smiles)
+                    writer.add_scalar('All/Validity', validity, global_step)
                     writer.add_scalar(f'Epoch {e}/Validity', validity, step)
                     if len(mols) > 0:
                         utils.add_mols(writer, f'Epoch {e}', mols[:10], mols_per_row=5, global_step=step)
@@ -145,6 +150,10 @@ def main(args):
                     # Check likelihood on other datasets
                     train_dataloader, _ = calculate_nlls_from_model(prior, train_smiles)
                     train_likelihood = next(train_dataloader)
+                    writer.add_scalars(f'All/Train_NLL',
+                                       {'sampled': sampled_likelihood.mean(),
+                                        'train': train_likelihood.mean()},
+                                       global_step)
                     writer.add_scalars(f'Epoch {e}/Train_NLL',
                                        {'sampled': sampled_likelihood.mean(),
                                         'train': train_likelihood.mean()},
@@ -152,6 +161,11 @@ def main(args):
                     if args.valid_smiles is not None:
                         valid_dataloader, _ = calculate_nlls_from_model(prior, valid_smiles)
                         valid_likelihood = next(valid_dataloader)
+                        writer.add_scalars(f'All/Valid_NLL',
+                                           {'sampled': sampled_likelihood.mean(),
+                                            'train': train_likelihood.mean(),
+                                            'valid': valid_likelihood.mean()},
+                                           global_step)
                         writer.add_scalars(f'Epoch {e}/Valid_NLL',
                                            {'sampled': sampled_likelihood.mean(),
                                             'train': train_likelihood.mean(),
@@ -161,6 +175,11 @@ def main(args):
                     if args.test_smiles is not None:
                         test_dataloader, _ = calculate_nlls_from_model(prior, test_smiles)
                         test_likelihood = next(test_dataloader)
+                        writer.add_scalars(f'All/Test_NLL',
+                                           {'train': train_likelihood.mean(),
+                                            'valid': valid_likelihood.mean(),
+                                            'test': test_likelihood.mean()},
+                                           global_step)
                         writer.add_scalars(f'Epoch {e}/Test_NLL',
                                            {'train': train_likelihood.mean(),
                                             'valid': valid_likelihood.mean(),
@@ -200,6 +219,7 @@ def get_args():
     network.add_argument('--cell_type', choices=['lstm', 'gru'], default='gru', help=' ')
     network.add_argument('--embedding_layer_size', type=int, default=256, help=' ')
     network.add_argument('--dropout', type=float, default=0.0, help=' ')
+    network.add_argument('--learning_rate', type=float, default=1e-3, help=' ')
     network.add_argument('--layer_normalization', action='store_true')
     return parser.parse_args()
 
