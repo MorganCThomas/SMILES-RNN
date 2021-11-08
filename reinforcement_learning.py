@@ -20,6 +20,15 @@ ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
 
+def train_step(optimizer, loss, verbose=False):
+    loss = loss.mean()
+    if verbose:
+        print(f'    Loss: {loss.data:.03f}')
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+
 def main(args):
     # Set device
     device = utils.set_default_device_cuda(args.device)
@@ -58,8 +67,14 @@ def main(args):
     for step in tqdm(range(args.n_steps), total=args.n_steps):
 
         # Sample
-        seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(args.batch_size)
-        agent_likelihood = - agent_likelihood
+        if args.rl_mode in ['HC', 'HC-reg']:
+            agent.network.eval()  # If HC, we compute loss from smaller batches later
+            with torch.no_grad():
+                seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(
+                    args.batch_size)
+        else:
+            seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(
+                args.batch_size)
 
         # Score
         try:
@@ -72,19 +87,16 @@ def main(args):
 
         # Compute loss
         if args.rl_mode == 'reinvent':
+            agent_likelihood = - agent_likelihood
             prior_likelihood = - prior.likelihood(seqs)
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
             loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'augHC':
+            agent_likelihood = - agent_likelihood
             prior_likelihood = - prior.likelihood(seqs)
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
@@ -93,32 +105,23 @@ def main(args):
             loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'augSH':
+            agent_likelihood = - agent_likelihood
             prior_likelihood = - prior.likelihood(seqs)
             augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores + 1)
             loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'HC':
+            loss_record += list(agent_likelihood.detach().cpu().numpy())
             sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
             agenthc_seqs = seqs[sscore_idxs.data[:int(args.batch_size * args.topk)]]
-            agenthc_seqs = agenthc_seqs.detach() # Remove current graph
-            #agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size * args.topk)]]
-            #loss = -agenthc_likelihood
+            # Now switch back to training mode
+            agent.network.train()
             # Repeat n epochs
             for e in range(0, args.epochs_per_step):
                 # Shuffle the data each epoch
@@ -127,14 +130,7 @@ def main(args):
                 # Update in appropriate batch sizes
                 for es in range(0, agenthc_seqs.shape[0], args.epochs_batch_size):
                     log_p = agent.likelihood(agenthc_seqs[es:es+args.epochs_batch_size])
-                    loss = log_p.mean()
-                    if args.verbose:
-                        print(f'    Loss: {loss.data:.03f}')
-                    optimizer.zero_grad()
-                    loss.backward()
-                    #torch.nn.utils.clip_grad_norm_(agent.network.parameters(), 1.0)
-                    optimizer.step()
-            loss_record += list(-agent_likelihood.detach().cpu().numpy())
+                    train_step(optimizer, log_p, verbose=args.verbose)
 
         if args.rl_mode == 'HC-reg':
             raise NotImplementedError
@@ -144,12 +140,7 @@ def main(args):
                    (args.kl_coefficient * agent.kl(seqs, prior)[sscore_idxs.data[:int(args.batch_size * args.topk)]])
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'PG':
             policy = torch.zeros(log_probs.shape)
@@ -158,12 +149,7 @@ def main(args):
             loss = policy.mean(dim=1)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'PG-reg':
             policy = torch.zeros(log_probs.shape)
@@ -173,12 +159,7 @@ def main(args):
                    (args.kl_coefficient * agent.kl(seqs, prior))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'A2C':
             raise NotImplementedError
@@ -192,12 +173,7 @@ def main(args):
             loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'A2C-reg':
             raise NotImplementedError
@@ -212,12 +188,7 @@ def main(args):
                    (args.entropy_coefficient * agent.entropy(seqs)) + (args.kl_coefficient * agent.kl(seqs, prior))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'PPO':
             raise NotImplementedError
@@ -234,12 +205,7 @@ def main(args):
             loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'PPO-reg':
             raise NotImplementedError
@@ -256,12 +222,7 @@ def main(args):
                    (args.entropy_coefficient * agent.entropy(seqs)) + (args.kl_coefficient * agent.kl(seqs, prior))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
-            loss = loss.mean()
-            if args.verbose:
-                print(f'    Loss: {loss.data:.03f}')
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            train_step(optimizer, loss, verbose=args.verbose)
 
         # Save the agent weights every few iterations
         if step % args.save_freq == 0 and step != 0:
@@ -308,7 +269,7 @@ def get_args():
     augSH_parser = subparsers.add_parser('augSH', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     augSH_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     augSH_parser.add_argument('--batch_size', type=int, default=64, help=' ')
-    augSH_parser.add_argument('-s', '--sigma', type=int, default=30, help='Scaling coefficient of score')
+    augSH_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     augSH_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     HC_parser = subparsers.add_parser('HC', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
