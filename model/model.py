@@ -515,6 +515,7 @@ class Model:
         # return sequences.data, nlls, values
 
     def _beam_search(self, k) -> Tuple[torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
         # TODO def beam search sample
         start_token = torch.zeros(k, dtype=torch.long)
         start_token[:] = self.vocabulary["^"]
