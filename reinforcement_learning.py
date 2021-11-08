@@ -134,7 +134,7 @@ def main(args):
                     loss.backward()
                     #torch.nn.utils.clip_grad_norm_(agent.network.parameters(), 1.0)
                     optimizer.step()
-            loss_record += list(-agenthc_likelihood.detach().cpu().numpy())
+            loss_record += list(-agent_likelihood.detach().cpu().numpy())
 
         if args.rl_mode == 'HC-reg':
             raise NotImplementedError
