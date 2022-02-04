@@ -32,8 +32,10 @@ def set_default_device_cuda(device='gpu'):
         torch.set_default_tensor_type(tensor)
         return device
     elif torch.cuda.is_available(): # Assume an index
+        raise NotImplementedError
         device = torch.device(f'cuda:{int(device)}')
-        tensor = torch.cuda.FloatTensor  # pylint: disable=E1101
+        #tensor = torch.cuda.FloatTensor  # pylint: disable=E1101
+        tensor = torch.FloatTensor
         torch.set_default_tensor_type(tensor)
         return device
 

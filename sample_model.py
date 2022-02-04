@@ -3,7 +3,9 @@ import os
 from os import path
 import argparse
 import logging
+
 from rdkit import rdBase
+from rdkit.Chem import AllChem as Chem
 
 from model.model import *
 from model import utils
@@ -31,9 +33,26 @@ def main(args):
     model = Model.load_from_file(file_path=args.model, sampling_mode=True, device=device)
 
     # Sample TODO different sample modes e.g. beam search, temperature
-    smiles, _ = model.sample_smiles(num=args.number)
+    smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
+
+    # If looking for unique only smiles, keep sampling until a unique number is reached
+    if args.unique:
+        logger.info('Canonicalizing smiles')
+        canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in smiles
+                            if Chem.MolFromSmiles(smi)]
+
+        logger.info(f'Topping up {len(set(canonical_smiles))} smiles')
+        while (len(set(canonical_smiles)) < args.number):
+            new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
+                                                temperature=args.temperature)
+            new_canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in new_smiles
+                                    if Chem.MolFromSmiles(smi)]
+            canonical_smiles += new_canonical_smiles
+
+        smiles = list(set(canonical_smiles))
 
     # Save
+    logger.info(f'Saving {len(set(smiles))} smiles')
     utils.save_smiles(smiles, args.output)
     return
 
@@ -45,6 +64,9 @@ def get_args():
     parser.add_argument('-o', '--output', type=str, help='Path to save file e.g. Data/Prior_10k.smi)', required=True)
     parser.add_argument('-d', '--device', default='gpu', help=' ')
     parser.add_argument('-n', '--number', type=int, default=10000, help=' ')
+    parser.add_argument('-t', '--temperature', type=float, default=1.0,
+                        help='Temperature to sample (1: multinomial, <1: Less random, >1: More random)')
+    parser.add_argument('--unique', action='store_true', help='Keep sampling until n unique canonical molecules have been sampled')
     args = parser.parse_args()
     return args
 

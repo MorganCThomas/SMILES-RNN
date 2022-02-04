@@ -156,12 +156,13 @@ class Model:
         self.vocabulary = vocabulary
         self.tokenizer = tokenizer
         self.max_sequence_length = max_sequence_length
+        self.device = device
 
         if not isinstance(network_params, dict):
             network_params = {}
 
         self.network = RNN(len(self.vocabulary), **network_params)
-        self.network.to(device)
+        self.network.to(self.device)
 
         self._nll_loss = nn.NLLLoss(reduction="none")
 
@@ -175,7 +176,7 @@ class Model:
         :return: new instance of the RNN or an exception if it was not possible to load it.
         """
         if torch.cuda.is_available():
-            save_dict = torch.load(file_path)
+            save_dict = torch.load(file_path, map_location=device)
         else:
             save_dict = torch.load(file_path, map_location=lambda storage, loc: storage)
 
@@ -184,7 +185,8 @@ class Model:
             vocabulary=save_dict['vocabulary'],
             tokenizer=save_dict.get('tokenizer', voc.SMILESTokenizer()),
             network_params=network_params,
-            max_sequence_length=save_dict['max_sequence_length']
+            max_sequence_length=save_dict['max_sequence_length'],
+            device=device
         )
         try:
             if save_dict['network_type'] == 'RNNCritic':
@@ -352,7 +354,7 @@ class Model:
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
-    def sample_smiles(self, num=128, batch_size=128) -> Tuple[List, np.array]:
+    def sample_smiles(self, num=128, batch_size=128, temperature=1.0) -> Tuple[List, np.array]:
         """
         Samples n SMILES from the model.
         :param num: Number of SMILES to sample.
@@ -361,23 +363,7 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        #batch_sizes = [batch_size for _ in range(num // batch_size)] + [num % batch_size]
-        #smiles_sampled = []
-        #likelihoods_sampled = []
-
-        #for size in batch_sizes:
-        #    if not size:
-        #        break
-        #    seqs, likelihoods, _, _, _ = self._sample(batch_size=size)
-        #    smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
-
-            #smiles_sampled.extend(smiles)
-            #likelihoods_sampled.append(likelihoods.data.cpu().numpy())
-
-            #del seqs, likelihoods
-        #return smiles_sampled, np.concatenate(likelihoods_sampled)
-
-        seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
+        seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
@@ -467,7 +453,7 @@ class Model:
                 action_log_probs.data[batch_idx:batch_idx+size, t] = torch.tensor([p[a] for p, a in
                                                                                    zip(log_probs, input_vector)])
                 if self.network._get_name() == 'RNNCritic':
-                    values.data[batch_idx:batch_idx+size, t] = value
+                    values.data[batch_idx:batch_idx+size, t] = value.squeeze(1)
 
                 nlls[batch_idx:batch_idx+size] += self._nll_loss(log_probs, input_vector)
 
@@ -486,33 +472,6 @@ class Model:
             values = values[:, non_zero_cols]
 
         return sequences.data, nlls, action_probs, action_log_probs, values
-
-    def _sample_critic(self, batch_size=128, temperature=1.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        raise DeprecationWarning
-        # start_token = torch.zeros(batch_size, dtype=torch.long)
-        # start_token[:] = self.vocabulary["^"]
-        # input_vector = start_token
-        # sequences = [self.vocabulary["^"] * torch.ones([batch_size, 1], dtype=torch.long)]
-        # if self.network._get_name() == 'RNNCritic':
-        #    values = [torch.zeros([batch_size, 1], dtype=torch.long)]
-        ## NOTE: The first token never gets added in the loop so the sequences are initialized with a start token
-        # hidden_state = None
-        # nlls = torch.zeros(batch_size)
-        # for _ in range(self.max_sequence_length - 1):
-        #    logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
-        #    logits = logits.squeeze(1) / temperature
-        #    probabilities = logits.softmax(dim=1)
-        #    log_probs = logits.log_softmax(dim=1)
-        #    input_vector = torch.multinomial(probabilities, 1).view(-1)
-        #    sequences.append(input_vector.view(-1, 1))
-        #    values.append(value.view(-1, 1))
-        #    nlls += self._nll_loss(log_probs, input_vector)
-        #    if input_vector.sum() == 0:
-        #        break
-
-        # sequences = torch.cat(sequences, 1)
-        # values = torch.cat(values, 1)
-        # return sequences.data, nlls, values
 
     def _beam_search(self, k) -> Tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
