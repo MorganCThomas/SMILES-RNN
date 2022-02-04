@@ -332,22 +332,6 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        #batch_sizes = [batch_size for _ in range(num // batch_size)] + [num % batch_size]
-        #smiles_sampled = []
-        #likelihoods_sampled = []
-
-        #for size in batch_sizes:
-        #    if not size:
-        #        break
-        #    seqs, likelihoods, _, _, _ = self._sample(batch_size=size)
-        #    smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
-        #              for seq in seqs.cpu().numpy()]
-
-        #    smiles_sampled.extend(smiles)
-        #    likelihoods_sampled.append(likelihoods.data.cpu().numpy())
-
-        #    del seqs, likelihoods
-        #return smiles_sampled, np.concatenate(likelihoods_sampled)
         seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
                   for seq in seqs.cpu().numpy()]
