@@ -2,8 +2,11 @@ import os
 import argparse
 import logging
 import json
+import copy
 from tqdm.auto import tqdm
 from rdkit import rdBase
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 import torch
 from model.model import Model
@@ -44,13 +47,18 @@ def main(args):
     with open(os.path.join(ms.save_dir, 'SMILES-RNN.params'), 'wt') as f:
         json.dump(vars(args), f)
 
-    # Load model
+    # Load prior
     logger.info(f'Loading models')
     if args.rl_mode not in ['HC', 'PG', 'A2C']:  # Don't need the prior in some cases
         prior = Model.load_from_file(file_path=args.prior, sampling_mode=True, device=device)
+
+    # Load agent
     agent = Model.load_from_file(file_path=args.agent, sampling_mode=False, device=device)
     if args.rl_mode in ['A2C', 'A2C-reg', 'PPO', 'PPO-reg']:
         agent.RNN2Critic()
+    if args.rl_mode == 'BAR':
+        best_agent = copy.deepcopy(agent)
+        best_avg_score = 0
 
     # Freeze layers (embedding + 4 parameters per RNN layer)
     if args.freeze is not None:
@@ -64,6 +72,9 @@ def main(args):
 
     # Start training
     loss_record = []
+    prior_record = []
+    agent_record = []
+
     for step in tqdm(range(args.n_steps), total=args.n_steps):
 
         # Sample
@@ -72,53 +83,105 @@ def main(args):
             with torch.no_grad():
                 seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(
                     args.batch_size)
+
+        elif args.rl_mode == 'BAR':
+            seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(
+                args.batch_size//2)
+
+            best_agent.network.eval()
+            with torch.no_grad():
+                best_seqs, best_smiles, best_agent_likelihood, best_probs, best_log_probs, _ = best_agent.sample_sequences_and_smiles(
+                    args.batch_size//2)
+
         else:
             seqs, smiles, agent_likelihood, probs, log_probs, critic_values = agent.sample_sequences_and_smiles(
                 args.batch_size)
 
         # Score
         try:
-            scores = ms(smiles)
+            if args.rl_mode == 'BAR':
+                scores = ms(smiles+best_smiles)
+                best_scores = utils.to_tensor(scores[args.batch_size//2:]).to(device)
+                scores = utils.to_tensor(scores[:args.batch_size//2]).to(device)
+
+            else:
+                scores = ms(smiles)
+                scores = utils.to_tensor(scores).to(device)
         except:
             utils.save_smiles(smiles, os.path.join(ms.save_dir, f'failed_{ms.step}.smi'))
             agent.save(os.path.join(ms.save_dir, f'Agent_{step}.ckpt'))
             ms.write_scores()
+            ms._write_temp_state(step=ms.step)
+            ms.kill_monitor()
             raise
 
         # Compute loss
-        if args.rl_mode == 'reinvent':
+        if (args.rl_mode == 'reinvent') or (args.rl_mode == 'reinvent2'):
             agent_likelihood = - agent_likelihood
             prior_likelihood = - prior.likelihood(seqs)
-            augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
+            augmented_likelihood = prior_likelihood + args.sigma * scores
             loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
+            prior_record += list(-prior_likelihood.detach().cpu().numpy())
+            agent_record += list(-agent_likelihood.detach().cpu().numpy())
             train_step(optimizer, loss, verbose=args.verbose)
+
+        if args.rl_mode == 'BAR':
+            # Agent sample
+            agent_likelihood = - agent_likelihood
+            prior_likelihood = - prior.likelihood(seqs)
+            augmented_likelihood = prior_likelihood + args.sigma * scores
+            agent_loss = (1 - args.alpha) * torch.pow((augmented_likelihood - agent_likelihood), 2).mean()
+
+            # Best agent sample
+            best_agent_likelihood = - best_agent_likelihood
+            current_agent_likelihood = - agent.likelihood(best_seqs)
+            best_augmented_likelihood = best_agent_likelihood + args.sigma * best_scores
+            best_agent_loss = args.alpha * torch.pow((best_augmented_likelihood - current_agent_likelihood), 2).mean()
+
+            loss = agent_loss + best_agent_loss
+
+            # Update
+            #loss_record += list(torch.cat([agent_loss, best_agent_loss]).detach().cpu().numpy())
+            #prior_record += list(torch.cat([-prior_likelihood, -current_agent_likelihood]).detach().cpu().numpy())
+            #agent_record += list(torch.cat([-agent_likelihood, -best_agent_likelihood]).detach().cpu().numpy())
+            train_step(optimizer, loss, verbose=args.verbose)
+
+            if step % args.update_freq == 0:
+                if scores.mean().detach().cpu().numpy() > best_avg_score:
+                    best_avg_score = scores.mean().detach().cpu().numpy()
+                    best_agent = copy.deepcopy(agent)
+
 
         if args.rl_mode == 'augHC':
             agent_likelihood = - agent_likelihood
             prior_likelihood = - prior.likelihood(seqs)
-            augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
-            sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
-            aughc_likelihood = augmented_likelihood[sscore_idxs.data[:int(args.batch_size * args.topk)]]
-            agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size * args.topk)]]
-            loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2)
+            augmented_likelihood = prior_likelihood + args.sigma * scores
+            sscore, sscore_idxs = scores.sort(descending=True)
+            loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
+            prior_record += list(-prior_likelihood.detach().cpu().numpy())
+            agent_record += list(-agent_likelihood.detach().cpu().numpy())
+            loss = loss[sscore_idxs.data[:int(args.batch_size * args.topk)]]
             train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'augSH':
             agent_likelihood = - agent_likelihood
             prior_likelihood = - prior.likelihood(seqs)
-            augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores + 1)
+            augmented_likelihood = prior_likelihood + args.sigma * (scores + 1)
             loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
+            prior_record += list(-prior_likelihood.detach().cpu().numpy())
+            agent_record += list(-agent_likelihood.detach().cpu().numpy())
             train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'HC':
             loss_record += list(agent_likelihood.detach().cpu().numpy())
-            sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
+            agent_record += list(agent_likelihood.detach().cpu().numpy())
+            sscore, sscore_idxs = scores.sort(descending=True)
             agenthc_seqs = seqs[sscore_idxs.data[:int(args.batch_size * args.topk)]]
             # Now switch back to training mode
             agent.network.train()
@@ -133,59 +196,57 @@ def main(args):
                     train_step(optimizer, log_p, verbose=args.verbose)
 
         if args.rl_mode == 'HC-reg':
-            raise NotImplementedError
-            sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
-            agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size * args.topk)]]
-            loss = -agenthc_likelihood +\
-                   (args.kl_coefficient * agent.kl(seqs, prior)[sscore_idxs.data[:int(args.batch_size * args.topk)]])
-            # Update
-            loss_record += list(loss.detach().cpu().numpy())
-            train_step(optimizer, loss, verbose=args.verbose)
+            dummy_loss = agent_likelihood + (args.kl_coefficient*agent.kl(seqs, prior))
+            loss_record += list(dummy_loss.detach().cpu().numpy())
+            prior_record += list(prior.likelihood(seqs).detach().cpu().numpy())
+            agent_record += list(agent_likelihood.detach().cpu().numpy())
+            sscore, sscore_idxs = scores.sort(descending=True)
+            agenthc_seqs = seqs[sscore_idxs.data[:int(args.batch_size * args.topk)]]
+            # Now switch back to training mode
+            agent.network.train()
+            # Repeat n epochs
+            for e in range(0, args.epochs_per_step):
+                # Shuffle the data each epoch
+                shuffle_idx = torch.randperm(agenthc_seqs.shape[0])
+                agenthc_seqs = agenthc_seqs[shuffle_idx]
+                # Update in appropriate batch sizes
+                for es in range(0, agenthc_seqs.shape[0], args.epochs_batch_size):
+                    log_p = agent.likelihood(agenthc_seqs[es:es + args.epochs_batch_size])
+                    # Regularize by penalizing kl divergence
+                    loss = log_p + (args.kl_coefficient*agent.kl(agenthc_seqs[es:es + args.epochs_batch_size], prior))
+                    train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'PG':
-            policy = torch.zeros(log_probs.shape)
-            for i, (prob, reward) in enumerate(zip(log_probs, utils.to_tensor(scores))):
-                policy[i, :] = prob * reward
-            loss = policy.mean(dim=1)
+            loss = agent_likelihood * scores
             # Update
             loss_record += list(loss.detach().cpu().numpy())
+            agent_record += list(agent_likelihood.detach().cpu().numpy())
             train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'PG-reg':
-            policy = torch.zeros(log_probs.shape)
-            for i, (prob, reward) in enumerate(zip(log_probs, utils.to_tensor(scores))):
-                policy[i, :] = prob * reward
-            loss = policy.mean(dim=1) + (args.entropy_coefficient * agent.entropy(seqs)) +\
-                   (args.kl_coefficient * agent.kl(seqs, prior))
+            loss = (agent_likelihood*scores) + (args.entropy_coefficient*agent.entropy(seqs)) + \
+                   (args.kl_coefficient*agent.kl(seqs, prior))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
+            prior_record += list(prior.likelihood(seqs).detach().cpu().numpy())
+            agent_record += list(agent_likelihood.detach().cpu().numpy())
             train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'A2C':
             raise NotImplementedError
-            rewards = torch.zeros(critic_values.shape)
-            for i in range(args.batch_size):
-                rewards[i, :] = utils.to_tensor(scores)[i]
-            advantage = rewards - critic_values
-            policy = torch.zeros(log_probs.shape)
-            for i, (prob, adv) in enumerate(zip(log_probs, advantage)):
-                policy[i, :] = (prob * adv) + torch.pow(adv, 2)
-            loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage))
+            advantage = scores - critic_values.sum(dim=1)  # Let's sum over all sequence steps
+            loss = (agent_likelihood*advantage) + torch.pow(advantage, 2)
             # Update
             loss_record += list(loss.detach().cpu().numpy())
+            agent_record += list(agent_likelihood.detach().cpu().numpy())
             train_step(optimizer, loss, verbose=args.verbose)
 
         if args.rl_mode == 'A2C-reg':
             raise NotImplementedError
-            rewards = torch.zeros(critic_values.shape)
-            for i in range(args.batch_size):
-                rewards[i, :] = utils.to_tensor(scores)[i]
-            advantage = rewards - critic_values
-            policy = torch.zeros(log_probs.shape)
-            for i, (prob, adv) in enumerate(zip(log_probs, advantage)):
-                policy[i, :] = (prob * adv) + torch.pow(adv, 2)
-            loss = policy.mean(dim=1) + (args.value_coefficient * agent.value_loss(seqs, advantage)) -\
-                   (args.entropy_coefficient * agent.entropy(seqs)) + (args.kl_coefficient * agent.kl(seqs, prior))
+            advantage = scores - critic_values.sum(dim=1)  # Let's sum over all sequence steps
+            loss = (agent_likelihood * advantage) + torch.pow(advantage, 2) +\
+                   (args.entropy_coefficient*agent.entropy(seqs)) +\
+                   (args.kl_coefficient*agent.kl(seqs, prior))
             # Update
             loss_record += list(loss.detach().cpu().numpy())
             train_step(optimizer, loss, verbose=args.verbose)
@@ -230,8 +291,11 @@ def main(args):
 
     # If the entire training finishes, clean up
     agent.save(os.path.join(ms.save_dir, f'Agent_{args.n_steps}.ckpt'))
-    ms.log_parameters({'loss': loss_record})
+    ms.log_parameters({'loss': loss_record,
+                       'prior_likelihood': prior_record,
+                       'agent_likelihood': agent_record})
     ms.write_scores()
+    ms.kill_monitor()
     return
 
 
@@ -258,6 +322,21 @@ def get_args():
     reinvent_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     reinvent_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
+    reinvent2_parser = subparsers.add_parser('reinvent2', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    reinvent2_parser.add_argument('--n_steps', type=int, default=250, help=' ')
+    reinvent2_parser.add_argument('--batch_size', type=int, default=128, help=' ')
+    reinvent2_parser.add_argument('-s', '--sigma', type=int, default=120, help='Scaling coefficient of score')
+    reinvent2_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    bar_parser = subparsers.add_parser('BAR', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    bar_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    bar_parser.add_argument('--batch_size', type=int, default=64, help='Batch size per agent (will be effectively doubled)')
+    bar_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    bar_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+    bar_parser.add_argument('-a', '--alpha', type=float, default=0.5, help='Scaling parameter of agent/best_agent',
+                            metavar="[0-1]")
+    bar_parser.add_argument('-uf', '--update_freq', type=int, default=5, help='Frequency of training steps to update the agent')
+
     augHC_parser = subparsers.add_parser('augHC', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     augHC_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     augHC_parser.add_argument('--batch_size', type=int, default=64, help=' ')
@@ -269,11 +348,11 @@ def get_args():
     augSH_parser = subparsers.add_parser('augSH', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     augSH_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     augSH_parser.add_argument('--batch_size', type=int, default=64, help=' ')
-    augSH_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    augSH_parser.add_argument('-s', '--sigma', type=int, default=30, help='Scaling coefficient of score')
     augSH_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     HC_parser = subparsers.add_parser('HC', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    HC_parser.add_argument('--n_steps', type=int, default=20, help=' ')
+    HC_parser.add_argument('--n_steps', type=int, default=30, help=' ')
     HC_parser.add_argument('--batch_size', type=int, default=1024, help=' ')
     HC_parser.add_argument('--epochs_per_step', type=int, default=2, help=' ')
     HC_parser.add_argument('--epochs_batch_size', type=int, default=256, help=' ')
@@ -282,7 +361,7 @@ def get_args():
     HC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     HCr_parser = subparsers.add_parser('HC-reg', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    HCr_parser.add_argument('--n_steps', type=int, default=20, help=' ')
+    HCr_parser.add_argument('--n_steps', type=int, default=30, help=' ')
     HCr_parser.add_argument('--batch_size', type=int, default=1024, help=' ')
     HCr_parser.add_argument('--epochs_per_step', type=int, default=2, help=' ')
     HCr_parser.add_argument('--epochs_batch_size', type=int, default=256, help=' ')
@@ -293,12 +372,12 @@ def get_args():
     HCr_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     PG_parser = subparsers.add_parser('PG', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    PG_parser.add_argument('--n_steps', type=int, default=200, help=' ')
+    PG_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     PG_parser.add_argument('--batch_size', type=int, default=64, help=' ')
     PG_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
 
     PGr_parser = subparsers.add_parser('PG-reg', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    PGr_parser.add_argument('--n_steps', type=int, default=200, help=' ')
+    PGr_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     PGr_parser.add_argument('--batch_size', type=int, default=64, help=' ')
     PGr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0,
                             help='Coefficient of entropy loss contribution')
@@ -307,20 +386,20 @@ def get_args():
     PGr_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
 
     A2C_parser = subparsers.add_parser('A2C', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    A2C_parser.add_argument('--n_steps', type=int, default=200, help=' ')
+    A2C_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     A2C_parser.add_argument('--batch_size', type=int, default=64, help=' ')
     A2C_parser.add_argument('-vlc', '--value_coefficient', type=float, default=0.5,
                             help='Coefficient of value loss contribution')
     A2C_parser.add_argument('-lr', '--learning_rate', type=float, default=4e-4, help='Adam learning rate')
 
     A2Cr_parser = subparsers.add_parser('A2C-reg', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    A2Cr_parser.add_argument('--n_steps', type=int, default=200, help=' ')
+    A2Cr_parser.add_argument('--n_steps', type=int, default=500, help=' ')
     A2Cr_parser.add_argument('--batch_size', type=int, default=64, help=' ')
     A2Cr_parser.add_argument('-vlc', '--value_coefficient', type=float, default=0.5,
                              help='Coefficient of value loss contribution')
     A2Cr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0.013,
                              help='Coefficient of entropy loss contribution')
-    A2Cr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=0,
+    A2Cr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=10,
                              help='Coefficient of KL loss contribution')
     A2Cr_parser.add_argument('-lr', '--learning_rate', type=float, default=4e-4, help='Adam learning rate')
 
