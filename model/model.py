@@ -352,9 +352,9 @@ class Model:
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
-    def sample_sequences_and_smiles(self, batch_size=128) -> \
+    def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0) -> \
             Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
-        seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size)
+        seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         return seqs, smiles, likelihoods, probs, log_probs, values
 
