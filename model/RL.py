@@ -36,6 +36,8 @@ class ReinforcementLearning:
         if freeze is not None:
             self._freeze_network(freeze)
         self.record = None
+        # Secret smiles prefix
+        self._smiles_prefix = None
 
     def train(self, n_steps, save_freq):
         for step in tqdm(range(n_steps), total=n_steps):
@@ -67,6 +69,8 @@ class ReinforcementLearning:
     def _sample_batch(self, batch_size):
         seqs, smiles, agent_likelihood, probs, log_probs, critic_values = self.agent.sample_sequences_and_smiles(
             batch_size)
+        if self._smiles_prefix is not None:
+            smiles = [self._smiles_prefix + smi for smi in smiles]
         return seqs, smiles, agent_likelihood, probs, log_probs, critic_values
 
     def _score(self, smiles, step):

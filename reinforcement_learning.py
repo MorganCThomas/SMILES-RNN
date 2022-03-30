@@ -44,6 +44,9 @@ def main(args):
             RL = strategy
     RL = RL(scoring_function=ms, save_dir=ms.save_dir, optimizer=torch.optim.Adam,
             **vars(args))
+    # Cheap fixed SMILES prefix
+    if args.smiles_prefix is not None:
+        RL._smiles_prefix = args.smiles_prefix
 
     # Start training
     record = RL.train(n_steps=args.n_steps, save_freq=args.save_freq)
@@ -67,6 +70,7 @@ def get_args():
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
     optional.add_argument('--save_freq', type=int, default=100, help='How often to save models')
     optional.add_argument('--verbose', action='store_true', help='Whether to print loss')
+    optional.add_argument('--smiles_prefix', type=str, default=None, help='Smiles prefix added after generation (i.e. for scoring')
 
     subparsers = parser.add_subparsers(title='RL strategy', dest='rl_strategy',
                                        help='Which reinforcement learning algorithm to use')
