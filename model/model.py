@@ -358,13 +358,6 @@ class Model:
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         return seqs, smiles, likelihoods, probs, log_probs, values
 
-    def sample_sequences_and_smiles_and_values(self, batch_size=128) -> Tuple[torch.Tensor, List,
-                                                                              torch.Tensor, torch.Tensor]:
-        raise DeprecationWarning
-        # seqs, likelihoods, values = self._sample_critic(batch_size=batch_size)
-        # smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
-        # return seqs, smiles, likelihoods, values
-
     def RNN2Critic(self):
         self.network = RNNCritic(self.network)
 
@@ -459,24 +452,3 @@ class Model:
 
     def _beam_search(self, k) -> Tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
-        # TODO def beam search sample
-        start_token = torch.zeros(k, dtype=torch.long)
-        start_token[:] = self.vocabulary["^"]
-        input_vector = start_token
-        sequences = [self.vocabulary["^"] * torch.ones([k, 1], dtype=torch.long)]
-        # NOTE: The first token never gets added in the loop so the sequences are initialized with a start token
-        hidden_state = None
-        nlls = torch.zeros(k)
-        for _ in range(self.max_sequence_length - 1):
-            logits, _, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
-            logits = logits.squeeze(1)
-            probabilities = logits.softmax(dim=1)
-            log_probs = logits.log_softmax(dim=1)
-            input_vector = torch.multinomial(probabilities, 1).view(-1)
-            sequences.append(input_vector.view(-1, 1))
-            nlls += self._nll_loss(log_probs, input_vector)
-            if input_vector.sum() == 0:
-                break
-
-        sequences = torch.cat(sequences, 1)
-        return sequences.data, nlls
