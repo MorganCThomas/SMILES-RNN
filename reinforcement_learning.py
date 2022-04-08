@@ -1,12 +1,16 @@
 import os
 import argparse
 import logging
+import json
+import copy
 from tqdm.auto import tqdm
 from rdkit import rdBase
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 import torch
 from model.model import Model
-from model import utils
+from model import RL_strategies, utils
 
 from molscore.manager import MolScore
 
@@ -18,78 +22,39 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
-
 def main(args):
-    # Set device
-    device = utils.set_default_device_cuda(args.device)
-    logger.info(f'Device set to {device.type}')
+    # Setup scoring function
+    ms = MolScore(model_name='SMILES-RNN', task_config=args.molscore_config)
+    ms.log_parameters({k: vars(args)[k] for k in
+                       ['prior', 'agent', 'batch_size', 'rl_strategy', 'sigma', 'kl_coefficient', 'entropy_coefficient']
+                       if k in vars(args).keys()})
 
-    # Scoring_function
-    ms = MolScore(model_name='reinvent', task_config=args.molscore_config)
-    ms.log_parameters({'optimization': args.rl_mode, 'batch_size': args.batch_size, 'sigma': args.sigma,
-                       'prior': os.path.basename(args.prior), 'init_agent': os.path.basename(args.agent)})
+    # Save these parameters for good measure
+    with open(os.path.join(ms.save_dir, 'SMILES-RNN.params'), 'wt') as f:
+        json.dump(vars(args), f)
 
-    # Load model
-    logger.info(f'Loading models')
-    prior = Model.load_from_file(file_path=args.prior, sampling_mode=True, device=device)
-    agent = Model.load_from_file(file_path=args.agent, sampling_mode=False, device=device)
+    # Setup device
+    args.device = utils.set_default_device_cuda(args.device)
+    logger.info(f'Device set to {args.device.type}')
 
-    # Freeze layers (embedding + 4 parameters per RNN layer)
-    if args.freeze is not None:
-        n_freeze = args.freeze * 4 + 1
-        for i, param in enumerate(agent.network.parameters()):
-            if i < n_freeze:  # Freeze parameter
-                param.requires_grad = False
-
-    # Setup optimizer
-    optimizer = torch.optim.Adam(agent.network.parameters(), lr=0.0005)
+    # Setup RL
+    assert any([args.rl_strategy == s._short_name for s in RL_strategies]), f"{args.rl_strategy} not found"
+    for strategy in RL_strategies:
+        if args.rl_strategy == strategy._short_name:
+            RL = strategy
+    RL = RL(scoring_function=ms, save_dir=ms.save_dir, optimizer=torch.optim.Adam,
+            **vars(args))
+    # Cheap fixed SMILES prefix
+    if args.smiles_prefix is not None:
+        RL._smiles_prefix = args.smiles_prefix
 
     # Start training
-    for step in tqdm(range(args.n_steps), total=args.n_steps):
+    record = RL.train(n_steps=args.n_steps, save_freq=args.save_freq)
 
-        seqs, smiles, agent_likelihood = agent.sample_sequences_and_smiles(args.batch_size)
-        agent_likelihood = -agent_likelihood
-        prior_likelihood = -prior.likelihood(seqs)
-        try:
-            scores = ms(smiles)
-        except:
-            utils.save_smiles(smiles, os.path.join(ms.save_dir, f'failed_{ms.step}.smi'))
-            agent.save(os.path.join(ms.save_dir, f'Agent_{step}.ckpt'))
-            ms.write_scores()
-            ms.kill_dash_monitor()
-            raise
-
-        if args.rl_mode == 'reinvent':
-            augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
-            loss = torch.pow((augmented_likelihood - agent_likelihood), 2)
-
-        if args.rl_mode == 'augHC':
-            augmented_likelihood = prior_likelihood + args.sigma * utils.to_tensor(scores)
-            sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
-            aughc_likelihood = augmented_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = torch.pow((aughc_likelihood - agenthc_likelihood), 2)
-
-        if args.rl_mode == 'HC':
-            sscore, sscore_idxs = utils.to_tensor(scores).sort(descending=True)
-            agenthc_likelihood = agent_likelihood[sscore_idxs.data[:int(args.batch_size // 2)]]
-            loss = - agenthc_likelihood.mean()
-
-        # Update
-        loss = loss.mean()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Save the agent weights every few iterations
-        if step % args.save_freq == 0 and step != 0:
-            agent.save(os.path.join(ms.save_dir, f'Agent_{step}.ckpt'))
-
-    # If the entire training finishes, clean up
-    agent.save(os.path.join(ms.save_dir, f'Agent_{args.n_steps}.ckpt'))
+    # Wrap up MolScore
+    if record is not None: ms.log_parameters(record)
     ms.write_scores()
-    ms.kill_dash_monitor()
-    return
+    ms.kill_monitor()
 
 
 def get_args():
@@ -97,22 +62,98 @@ def get_args():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     required = parser.add_argument_group('Required arguments')
     required.add_argument('-p', '--prior', type=str, help='Path to prior checkpoint (.ckpt)', required=True)
-    required.add_argument('-a', '--agent', type=str, help='Path to agent checkpoint (.ckpt)', required=True)
     required.add_argument('-m', '--molscore_config', type=str, help='Path to molscore config (.json)', required=True)
 
     optional = parser.add_argument_group('Optional arguments')
-    optional.add_argument('--batch_size', type=int, default=64, help=' ')
-    optional.add_argument('--n_steps', type=int, default=200, help=' ')
+    optional.add_argument('-a', '--agent', type=str, help='Path to agent checkpoint (.ckpt)')
     optional.add_argument('-d', '--device', default='gpu', help=' ')
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
-    optional.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
-    optional.add_argument('-rl', '--rl_mode', type=str, default='reinvent',
-                          choices=['reinvent', 'augHC', 'HC'],
-                          help='Which reinforcement learning algorithm to use')
     optional.add_argument('--save_freq', type=int, default=100, help='How often to save models')
+    optional.add_argument('--verbose', action='store_true', help='Whether to print loss')
+    optional.add_argument('--smiles_prefix', type=str, default=None, help='Smiles prefix added after generation (i.e. for scoring')
+
+    subparsers = parser.add_subparsers(title='RL strategy', dest='rl_strategy',
+                                       help='Which reinforcement learning algorithm to use')
+
+    reinvent_parser = subparsers.add_parser('RV', description="REINVENT",
+                                            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    reinvent_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    reinvent_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    reinvent_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    reinvent_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    reinvent2_parser = subparsers.add_parser('RV2', description="REINVENT (v2.0 defaults)",
+                                             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    reinvent2_parser.add_argument('--n_steps', type=int, default=250, help=' ')
+    reinvent2_parser.add_argument('--batch_size', type=int, default=128, help=' ')
+    reinvent2_parser.add_argument('-s', '--sigma', type=int, default=120, help='Scaling coefficient of score')
+    reinvent2_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    bar_parser = subparsers.add_parser('BAR', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    bar_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    bar_parser.add_argument('--batch_size', type=int, default=64, help='Batch size per agent (will be effectively doubled)')
+    bar_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    bar_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+    bar_parser.add_argument('-a', '--alpha', type=float, default=0.5, help='Scaling parameter of agent/best_agent',
+                            metavar="[0-1]")
+    bar_parser.add_argument('-uf', '--update_freq', type=int, default=5, help='Frequency of training steps to update the agent')
+
+    augHC_parser = subparsers.add_parser('AHC', description="Augmented Hill-Climb",
+                                         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    augHC_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    augHC_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    augHC_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
+    augHC_parser.add_argument('-k', '--topk', type=float, default=0.5, help='Fraction of top molecules to keep',
+                              metavar="[0-1]")
+    augHC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    HC_parser = subparsers.add_parser('HC', description="Hill-Climb",
+                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    HC_parser.add_argument('--n_steps', type=int, default=30, help=' ')
+    HC_parser.add_argument('--batch_size', type=int, default=1024, help=' ')
+    HC_parser.add_argument('--epochs_per_step', type=int, default=2, help=' ')
+    HC_parser.add_argument('--epochs_batch_size', type=int, default=256, help=' ')
+    HC_parser.add_argument('-k', '--topk', type=float, default=0.5, help='Fraction of top molecules to keep',
+                           metavar="[0-1]")
+    HC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    HCr_parser = subparsers.add_parser('HC-reg', description="Hill-Climb regularized",
+                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    HCr_parser.add_argument('--n_steps', type=int, default=30, help=' ')
+    HCr_parser.add_argument('--batch_size', type=int, default=1024, help=' ')
+    HCr_parser.add_argument('--epochs_per_step', type=int, default=2, help=' ')
+    HCr_parser.add_argument('--epochs_batch_size', type=int, default=256, help=' ')
+    HCr_parser.add_argument('-k', '--topk', type=float, default=0.5, help='Fraction of top molecules to keep',
+                            metavar="[0-1]")
+    HCr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=10,
+                            help='Coefficient of KL loss contribution')
+    HCr_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
+
+    PG_parser = subparsers.add_parser('RF', description="REINFORCE",
+                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    PG_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    PG_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    PG_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
+
+    PGr_parser = subparsers.add_parser('RF-reg', description="REINFORCE regularized",
+                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    PGr_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    PGr_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    PGr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0,
+                            help='Coefficient of entropy loss contribution')
+    PGr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=10,
+                            help='Coefficient of KL loss contribution')
+    PGr_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
+
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = get_args()
+    # Correct some input arguments
+    if args.rl_strategy == 'RV2':
+        args.rl_strategy = 'RV'
+    # Set agent as prior if not specified
+    if args.agent is None:
+        setattr(args, 'agent', args.prior)
     main(args)

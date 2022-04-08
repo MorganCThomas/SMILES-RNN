@@ -7,36 +7,7 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from tqdm.auto import tqdm
 from functools import partial
 from itertools import chain
-
-
-def randomize_smiles(smi, n_rand=10, random_type="restricted",):
-    """
-    Returns a random SMILES given a SMILES of a molecule.
-    :param smi: A SMILES string
-    :param n_rand: Number of randomized smiles per molecule
-    :param random_type: The type (unrestricted, restricted) of randomization performed.
-    :return : A random SMILES string of the same molecule or None if the molecule is invalid.
-    """
-    assert random_type in ['restricted', 'unrestricted'], f"Type {random_type} is not valid"
-    mol = Chem.MolFromSmiles(smi)
-
-    if not mol:
-        return None
-
-    if random_type == "unrestricted":
-        rand_smiles = []
-        for i in range(n_rand):
-            rand_smiles.append(Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False))
-        return list(set(rand_smiles))
-
-    if random_type == "restricted":
-        rand_smiles = []
-        for i in range(n_rand):
-            new_atom_order = list(range(mol.GetNumAtoms()))
-            random.shuffle(new_atom_order)
-            random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
-            rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
-        return rand_smiles
+from model.utils import read_smiles, save_smiles, randomize_smiles
 
 
 def get_args():
@@ -89,8 +60,7 @@ def get_args():
 
 def main(args):
     # Read smiles
-    with open(args.input, 'rt') as f:
-        smiles = f.read().splitlines()
+    smiles = read_smiles(args.input)
 
     # Randomize smiles
     with Pool(args.n_jobs) as pool:
@@ -109,8 +79,7 @@ def main(args):
         random.shuffle(random_smiles)
 
     # Save output
-    with open(args.output, 'wt') as f:
-        _ = [f.write(f'{smi}\n') for smi in random_smiles]
+    save_smiles(random_smiles, args.output)
 
 
 if __name__ == '__main__':
