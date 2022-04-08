@@ -3,6 +3,7 @@ import os
 import gzip
 import torch
 import logging
+import random
 import numpy as np
 import torch.utils.tensorboard.summary as tbxs
 from rdkit import Chem
@@ -114,3 +115,32 @@ def add_image(writer, tag, image, global_step=None, walltime=None):
                                        encoded_image_string=image_string)
     summary = tbxs.Summary(value=[tbxs.Summary.Value(tag=tag, image=summary_image)])
     writer.file_writer.add_summary(summary, global_step, walltime)
+
+def randomize_smiles(smi, n_rand=10, random_type="restricted",):
+    """
+    Returns a random SMILES given a SMILES of a molecule.
+    :param smi: A SMILES string
+    :param n_rand: Number of randomized smiles per molecule
+    :param random_type: The type (unrestricted, restricted) of randomization performed.
+    :return : A random SMILES string of the same molecule or None if the molecule is invalid.
+    """
+    assert random_type in ['restricted', 'unrestricted'], f"Type {random_type} is not valid"
+    mol = Chem.MolFromSmiles(smi)
+
+    if not mol:
+        return None
+
+    if random_type == "unrestricted":
+        rand_smiles = []
+        for i in range(n_rand):
+            rand_smiles.append(Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False))
+        return list(set(rand_smiles))
+
+    if random_type == "restricted":
+        rand_smiles = []
+        for i in range(n_rand):
+            new_atom_order = list(range(mol.GetNumAtoms()))
+            random.shuffle(new_atom_order)
+            random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
+            rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
+        return rand_smiles

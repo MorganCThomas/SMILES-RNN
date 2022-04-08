@@ -61,7 +61,7 @@ def get_args():
     parser = argparse.ArgumentParser(description='Sample smiles from model',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-m', '--model', type=str, help='Path to checkpoint (.ckpt)', required=True)
-    parser.add_argument('-o', '--output', type=str, help='Path to save file e.g. Data/Prior_10k.smi)', required=True)
+    parser.add_argument('-o', '--output', type=str, help='Path to save file (e.g. Data/Prior_10k.smi)', required=True)
     parser.add_argument('-d', '--device', default='gpu', help=' ')
     parser.add_argument('-n', '--number', type=int, default=10000, help=' ')
     parser.add_argument('-t', '--temperature', type=float, default=1.0,

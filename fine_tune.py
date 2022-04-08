@@ -12,7 +12,7 @@ from model.vocabulary import *
 from model.model import *
 from model.dataset import *
 from model import utils
-from model.randomize_smiles import randomize_smiles
+from model.utils import randomize_smiles
 
 rdBase.DisableLog("rdApp.error")
 
@@ -142,7 +142,7 @@ def main(args):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Train an initial prior model based on smiles data',
+    parser = argparse.ArgumentParser(description='Fine-tune a pre-trained prior model based on a smaller dataset',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     required = parser.add_argument_group('Required arguments')
     required.add_argument('-p', '--prior', type=str, help='Path to prior file', required=True)

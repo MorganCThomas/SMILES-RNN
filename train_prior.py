@@ -14,7 +14,7 @@ from model.vocabulary import *
 from model.model import *
 from model.dataset import *
 from model import utils
-from model.randomize_smiles import randomize_smiles
+from model.utils import randomize_smiles
 
 rdBase.DisableLog("rdApp.error")
 
