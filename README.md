@@ -1,6 +1,6 @@
 # SMILES-RNN
 
-This repo contains code for a SMILES-based recurrent neural network used for *de novo* molecule generation with several  reinforcement learning algorithms available for molecule optimization. This is a stripped-back, heavily modified version of [REINVENT 2.0](https://github.com/MolecularAI/Reinvent/tree/reinvent.v.2.0) with some added functionality. This was written to be used in conjunction with [MolScore](www.githttps://github.com/MorganCThomas/MolScore) - although any other scoring function can also be used.
+This repo contains code for a SMILES-based recurrent neural network used for *de novo* molecule generation with several  reinforcement learning algorithms available for molecule optimization. This is a stripped-back, heavily modified version of [REINVENT 2.0](https://github.com/MolecularAI/Reinvent/tree/reinvent.v.2.0) with some added functionality. This was written to be used in conjunction with [MolScore](https://github.com/MorganCThomas/MolScore) - although any other scoring function can also be used.
 
 ## Installation
 First setup a conda environment with the correct requirements.
