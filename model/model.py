@@ -135,7 +135,7 @@ class RNNCritic(nn.Module):
             'layer_size': self.RNN._layer_size,
             'num_layers': self.RNN._num_layers,
             'cell_type': self.RNN._cell_type,
-            'embedding_layer_size': self.RNN._embedding_layer_size,
+            'embedding_layer_size': self.RNN._embedding_layer_size
         }
 
 
