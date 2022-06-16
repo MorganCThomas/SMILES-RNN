@@ -1,10 +1,12 @@
 import io
+import re
 import os
 import gzip
 import torch
 import logging
 import random
 import numpy as np
+from model.vocabulary import SMILESTokenizer, DeepSMILESTokenizer
 import torch.utils.tensorboard.summary as tbxs
 from rdkit import Chem
 import rdkit.Chem.Draw as Draw
@@ -116,12 +118,13 @@ def add_image(writer, tag, image, global_step=None, walltime=None):
     summary = tbxs.Summary(value=[tbxs.Summary.Value(tag=tag, image=summary_image)])
     writer.file_writer.add_summary(summary, global_step, walltime)
 
-def randomize_smiles(smi, n_rand=10, random_type="restricted",):
+def randomize_smiles(smi, n_rand=10, random_type="restricted", keep_last=False):
     """
     Returns a random SMILES given a SMILES of a molecule.
     :param smi: A SMILES string
     :param n_rand: Number of randomized smiles per molecule
     :param random_type: The type (unrestricted, restricted) of randomization performed.
+    :param keep_last: Whether to try and enforce the last atom as always the last atom, not always possible so checked at a later point
     :return : A random SMILES string of the same molecule or None if the molecule is invalid.
     """
     assert random_type in ['restricted', 'unrestricted'], f"Type {random_type} is not valid"
@@ -133,14 +136,88 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted",):
     if random_type == "unrestricted":
         rand_smiles = []
         for i in range(n_rand):
-            rand_smiles.append(Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False))
+        #while len(rand_smiles) < n_rand:
+            if keep_last:
+                random_smiles = Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False, rootedAtAtom=len(smi))
+            else:
+                rand_smiles.append(Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False))
         return list(set(rand_smiles))
 
     if random_type == "restricted":
         rand_smiles = []
         for i in range(n_rand):
-            new_atom_order = list(range(mol.GetNumAtoms()))
-            random.shuffle(new_atom_order)
-            random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
-            rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
+        #while len(rand_smiles) < n_rand:
+            if keep_last:
+                new_atom_order = list(range(mol.GetNumAtoms()))
+                last_atom = new_atom_order.pop(-1)
+                random.shuffle(new_atom_order)
+                new_atom_order.append(last_atom)
+                random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
+                # Check last atom is still last atom... ? How?
+                random_smiles = Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False)
+                # Atleast if it's a different symbol ignore
+                if smi[-1] != random_smiles[-1]:
+                    continue
+                rand_smiles.append(random_smiles)
+            else:
+                new_atom_order = list(range(mol.GetNumAtoms()))
+                random.shuffle(new_atom_order)
+                random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
+                rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
         return rand_smiles
+
+def reverse_smiles(smiles):
+    """
+    Reverse a smiles string while maintaining syntax
+    """
+    # Reversed tokenized list so square brackets, Br, Cl and double ring numbers remain in order
+    tokenizer = DeepSMILESTokenizer(rings=False, branch_tokens=True)
+    tdsmiles = tokenizer.tokenize(smiles, with_begin_and_end=False)
+    rtdsmiles = list(reversed(tdsmiles))
+    # Don't need to Correct brackets
+    #bracket_dict = {'(': ')', ')': '('}
+    #rtsmiles = [bracket_dict[t] if t in bracket_dict.keys() else t for t in rtsmiles]
+    # Push rings back
+    ring_idxs = [i for i, t in enumerate(rtdsmiles) if re.search("^[0-9]{1}$|^[0-9]{2}$", t)]
+    for i in ring_idxs:
+        ring = rtdsmiles.pop(i)
+        rtdsmiles.insert(i+1, ring)
+    # Push parenthesis back
+    #p_idxs = [i for i, t in enumerate(rtdsmiles) if re.search("(\)+)", t)]
+    #for i in p_idxs:
+    #    p = rtdsmiles.pop(i)
+    #    rtdsmiles.insert(i+1, p)
+    # Change order of ring numbering
+    ring_count = 1
+    ring_map = {} # Index to new ring number
+    for i, t in enumerate(rtdsmiles):
+        if re.search("^[0-9]{1}$|^[0-9]{2}$", t):
+            if t in ring_map.keys():
+                continue
+            else:
+                ring_map[t] = str(ring_count)
+                ring_count += 1
+    rtdsmiles = [ring_map[t] if t in ring_map.keys() else t for t in rtdsmiles]
+    # Push ring branches back
+    corrected_rtdsmiles = []
+    for i, t in enumerate(reversed(rtdsmiles)):
+        # Correct parenthesis
+        if re.search("\)+", t):
+            # Count non character atoms up to length of branch
+            correction_count = len(t)
+            for ci, ct in enumerate(corrected_rtdsmiles):
+                if re.search("^[0-9]+$", ct):
+                    correction_count += 1
+                elif re.search("^\)+$", ct):
+                        correction_count += (1 + len(ct))
+                else:
+                    if ci == correction_count:
+                        break
+            print(correction_count)           
+            corrected_rtdsmiles.insert(correction_count, t)
+        else:
+            corrected_rtdsmiles.insert(0, t)
+        print(''.join(corrected_rtdsmiles))
+
+    rsmiles = tokenizer.untokenize(corrected_rtdsmiles, convert_to_smiles=True)
+    return rsmiles
