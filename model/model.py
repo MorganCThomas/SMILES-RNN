@@ -2,6 +2,7 @@
 Adaption of RNN model from https://github.com/MolecularAI/Reinvent
 """
 
+from functools import partial
 from typing import List, Tuple, Union
 import numpy as np
 import torch
@@ -323,7 +324,7 @@ class Model:
             kls[i] = torch.tensor(seq_kls).mean()
         return kls
 
-    def sample_native(self, num=128, batch_size=128) -> Tuple[List, np.array]:
+    def sample_native(self, num=128, batch_size=128, partial=None) -> Tuple[List, np.array]:
         """
         Samples n strings from the model according to the native grammar.
         :param num: Number of SMILES to sample.
@@ -332,13 +333,19 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
+        if partial is not None:
+            tokens = self.tokenizer.tokenize(partial)
+            encoded = self.vocabulary.encode(tokens)
+            pseq = torch.tensor(encoded, dtype=torch.long)
+            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, partial_sequence=pseq)
+        else:
+            seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
                   for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
-    def sample_smiles(self, num=128, batch_size=128, temperature=1.0) -> Tuple[List, np.array]:
+    def sample_smiles(self, num=128, batch_size=128, temperature=1.0, partial=None) -> Tuple[List, np.array]:
         """
         Samples n SMILES from the model.
         :param num: Number of SMILES to sample.
@@ -347,14 +354,26 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
+        if partial is not None:
+            tokens = self.tokenizer.tokenize(partial)
+            encoded = self.vocabulary.encode(tokens)
+            pseq = torch.tensor(encoded, dtype=torch.long)
+            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature, partial_sequence=pseq)
+        else:
+            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
-    def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0) -> \
+    def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0, partial=None) -> \
             Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
-        seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature)
+        if partial is None:
+            tokens = self.tokenizer.tokenize(partial)
+            encoded = self.vocabulary.encode(tokens)
+            pseq = torch.tensor(encoded, dtype=torch.long)
+            seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature, partial_sequence=pseq)
+        else:
+            seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         return seqs, smiles, likelihoods, probs, log_probs, values
 
@@ -397,10 +416,13 @@ class Model:
             values = torch.cat(values, 1)
         return sequences.data, nlls, action_probs, action_log_probs, values
 
-    def _batch_sample(self, num=128, batch_size=64, temperature=1.0) -> \
+    def _batch_sample(self, num=128, batch_size=64, temperature=1.0, partial_sequence=None) -> \
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         # To ensure all sizes match up, we'll pad with zero and remove non-zero columns after
         sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
+        if partial_sequence is not None:
+            partial_sequence = partial_sequence[:-1] # Remove end token
+
         nlls = torch.zeros(num)
         action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
         action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
@@ -411,18 +433,24 @@ class Model:
         batch_sizes = [batch_size for _ in range(num // batch_size)]
         batch_sizes += [num % batch_size] if num % batch_size != 0 else []
         batch_idx = 0
+
         for size in batch_sizes:
             start_token = torch.zeros(size, dtype=torch.long)
             start_token[:] = self.vocabulary["^"]
             input_vector = start_token
             sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
             hidden_state = None
+            
+            # Now iteratively sample as normal
             for t in range(1, self.max_sequence_length):
                 logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
                 logits = logits.squeeze(1) / temperature
                 probabilities = logits.softmax(dim=1)
                 log_probs = logits.log_softmax(dim=1)
-                input_vector = torch.multinomial(probabilities, 1).view(-1)
+                if (partial_sequence is not None) and (t < len(partial_sequence)):
+                    input_vector = partial_sequence[t].repeat(size, 1).view(-1)  # Enforce partial sampling
+                else:
+                    input_vector = torch.multinomial(probabilities, 1).view(-1)
 
                 sequences[batch_idx:batch_idx+size, t] = input_vector
                 action_probs.data[batch_idx:batch_idx+size, t] = torch.tensor([p[a] for p, a in
