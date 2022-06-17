@@ -37,7 +37,7 @@ class TransformerEncoder(nn.Module):
     """
     Implements a N stacked multi-headed attention network for molecule generation
     """
-    def __init__(self, voc_size, nheads=8, n_dims=256, ff_dims=512, num_layers=4, dropout=0.):
+    def __init__(self, voc_size, nheads=8, n_dims=256, ff_dims=1024, num_layers=4, dropout=0.):
         super(TransformerEncoder, self).__init__()
 
         self._nheads = nheads
@@ -54,14 +54,17 @@ class TransformerEncoder(nn.Module):
         self._encoder = nn.TransformerEncoder(encoder_layer, self._num_layers, encoder_norm)
         self._linear = nn.Linear(self._n_dims, voc_size)
 
-    def forward(self, seqs):
+    def forward(self, seqs, no_mask=False):
         """
         Performs forward pass on the model (Transpose input and Output for consistent API with Model)
         :param sequences: Input tensor (batch_size, seq_size)
         :return: Output tensor (batch_size, seq_size, voc_size)
         """
         seqs = seqs.T
-        mask = TransformerEncoder.generate_square_subsequent_mask(seqs.shape[0])#.to(self.device)
+        if no_mask:
+            mask = None
+        else:
+            mask = TransformerEncoder.generate_square_subsequent_mask(seqs.shape[0])#.to(self.device)
         embedded = self._embedding(seqs)
         positional_encoded = self._positional_encoder(embedded)
         encoded = self._encoder(positional_encoded, mask=mask)
@@ -78,7 +81,7 @@ class TransformerEncoder(nn.Module):
         Returns the configuration parameters of the model.
         """
         return {
-            'nhead': self._nheads,
+            'nheads': self._nheads,
             'n_dims': self._n_dims,
             'ff_dims': self._ff_dims,
             'num_layers': self._num_layers,
@@ -220,43 +223,56 @@ class Model:
 
     def _batch_sample(self, num=128, batch_size=64, temperature=1.0) -> \
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
-        # To ensure all sizes match up, we'll pad with zero and remove non-zero columns after
-        sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
-        nlls = torch.zeros(num)
-        action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
-        action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
+        with torch.no_grad():
+            # To ensure all sizes match up, we'll pad with zero and remove non-zero columns after
+            sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long, requires_grad=False)
+            action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
+            action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
+            #nlls = torch.zeros(num)
 
-        # Sample in batches
-        batch_sizes = [batch_size for _ in range(num // batch_size)]
-        batch_sizes += [num % batch_size] if num % batch_size != 0 else []
-        batch_idx = 0
-        for size in batch_sizes:
-            # TODO has to be done one by one, otherwise only inserting one bloody token!
-            batch_seqs = torch.zeros(size, self.max_sequence_length, dtype=torch.long)
-            batch_seqs[:, 0] = self.vocabulary["^"]
-            logits = self.network(batch_seqs[:, :-1])
-            logits = logits / temperature
-            probabilities = logits.softmax(dim=2)
-            log_probs = logits.log_softmax(dim=2)
-            batch_seqs[:, 1:] = torch.distributions.Categorical(probs=probabilities).sample()
-            sequences[batch_idx:batch_idx + size, :] = batch_seqs
+            # Sample in batches
+            batch_sizes = [batch_size for _ in range(num // batch_size)]
+            batch_sizes += [num % batch_size] if num % batch_size != 0 else []
+            batch_idx = 0
+            for size in batch_sizes:
+                # TODO has to be done one by one, otherwise only inserting one bloody token!
+                input_vectors = torch.zeros((size, self.max_sequence_length), dtype=torch.long)
+                input_vectors[:, 0] = self.vocabulary["^"]
+                sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
+                for t in range(1, self.max_sequence_length - 1):
+                    logits = self.network(input_vectors[:, :t], no_mask=False)[:, -1, :] # Final prediction only
+                    logits = logits / temperature
+                    probabilities = logits.softmax(dim=1)
+                    log_probs = logits.log_softmax(dim=1)
+                    next_token = torch.multinomial(probabilities, 1).squeeze()
+                    input_vectors[:, t] = next_token
+                    
+                    sequences[batch_idx:batch_idx+size, t] = next_token
+                    action_probs.data[batch_idx:batch_idx+size, t] = torch.tensor([p[a] for p, a in
+                                                                                zip(probabilities, next_token)])
+                    action_log_probs.data[batch_idx:batch_idx+size, t] = torch.tensor([p[a] for p, a in
+                                                                                    zip(log_probs, next_token)])
+                    
+                    #nlls[batch_idx:batch_idx + size] += self._nll_loss(log_probs, next_token)
 
-            action_probs.data[batch_idx:batch_idx+size, 1:] = torch.tensor([[p[a] for p, a in zip(bp, ba)] for bp, ba in
-                                                                               zip(probabilities, batch_seqs[:, 1:])])
-            action_log_probs.data[batch_idx:batch_idx+size, 1:] = torch.tensor([[p[a] for p, a in zip(bp, ba)] for bp, ba in
-                                                                                zip(log_probs, batch_seqs[:, 1:])])
-            nlls[batch_idx:batch_idx+size] = self._nll_loss(log_probs.transpose(1, 2), batch_seqs[:, 1:]).sum(dim=1)
-            
-            batch_idx += size
+                    if next_token.sum() == 0:  # If all sequences terminate, finish.
+                        break
 
-        # Trim any completely non zero cols
-        non_zero_cols = [col_idx for col_idx, col in enumerate(torch.split(sequences, 1, dim=1))
-                         if not torch.all(col == 0)]
-        sequences = sequences[:, non_zero_cols]
-        action_probs = action_probs[:, non_zero_cols]
-        action_log_probs = action_log_probs[:, non_zero_cols]
+                batch_idx += size
+
+            # Trim any completely non zero cols
+            non_zero_cols = [col_idx for col_idx, col in enumerate(torch.split(sequences, 1, dim=1))
+                            if not torch.all(col == 0)]
+            sequences = sequences[:, non_zero_cols]
+            action_probs = action_probs[:, non_zero_cols]
+            action_log_probs = action_log_probs[:, non_zero_cols]
+
+        # Compute nlls afterwards at once to save memory - watch batch size ...
+        sequences = sequences.long()
+        nlls = self.likelihood(sequences=sequences)
 
         return sequences.data, nlls, action_probs, action_log_probs
+
 
 if __name__ == '__main__':
     import torch
@@ -264,7 +280,7 @@ if __name__ == '__main__':
     from model.dataset import Dataset
     from model.utils import set_default_device_cuda, read_smiles
     from model.vocabulary import SMILESTokenizer, create_vocabulary
-    device = set_default_device_cuda('cuda')
+    device = set_default_device_cuda('gpu')
     train_smiles = read_smiles('../../project/Priors/ChEMBL_potent/processed_data/ChEMBL28p_all.smi.gz')
     tokenizer = SMILESTokenizer()
     smiles_vocab = create_vocabulary(smiles_list=train_smiles, tokenizer=tokenizer)
