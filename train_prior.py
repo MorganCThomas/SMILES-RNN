@@ -11,7 +11,7 @@ from itertools import chain
 from torch.utils.tensorboard import SummaryWriter
 
 from model.vocabulary import *
-from model.model import *
+from model.rnn import *
 from model.transformer import Model as TransformerModel
 from model.dataset import *
 from model import utils
