@@ -1,7 +1,4 @@
 import os
-import argparse
-import logging
-import json
 import copy
 from tqdm.auto import tqdm
 from rdkit import rdBase
@@ -9,13 +6,15 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import torch
-from model.model import Model
+from model.rnn import Model
+from model.transformer import Model as TransformerModel
 from model import utils
 
 
 class ReinforcementLearning:
     def __init__(self,
                  device,
+                 model,
                  agent,
                  scoring_function,
                  save_dir,
@@ -25,8 +24,9 @@ class ReinforcementLearning:
                  freeze=None):
         # Device
         self.device = device
+        self.model = Model if model == 'RNN' else TransformerModel
         # Load agent
-        self.agent = Model.load_from_file(file_path=agent, sampling_mode=False, device=device)
+        self.agent = self.model.load_from_file(file_path=agent, sampling_mode=False, device=device)
         # Scoring function
         self.scoring_function = scoring_function
         self.molscore = is_molscore
@@ -99,9 +99,9 @@ class ReinforcementLearning:
 
 class Reinforce(ReinforcementLearning):
     _short_name = 'RF'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  batch_size=64, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Parameters
         self.batch_size = batch_size
@@ -124,15 +124,15 @@ class Reinforce(ReinforcementLearning):
 
 class ReinforceRegularized(ReinforcementLearning):
     _short_name = 'RF-reg'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  prior=None, batch_size=64, entropy_coefficient=0, kl_coefficient=10, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Load prior
         if prior is None:
-            self.prior = Model.load_from_file(file_path=agent, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=agent, sampling_mode=True, device=device)
         else:
-            self.prior = Model.load_from_file(file_path=prior, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=prior, sampling_mode=True, device=device)
         # Parameters
         self.batch_size = batch_size
         self.entropy_co = entropy_coefficient
@@ -157,15 +157,15 @@ class ReinforceRegularized(ReinforcementLearning):
 
 class Reinvent(ReinforcementLearning):
     _short_name = 'RV'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  prior=None, batch_size=64, sigma=60, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Load prior
         if prior is None:
-            self.prior = Model.load_from_file(file_path=agent, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=agent, sampling_mode=True, device=device)
         else:
-            self.prior = Model.load_from_file(file_path=prior, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=prior, sampling_mode=True, device=device)
         # Parameters
         self.batch_size = batch_size
         self.sigma = sigma
@@ -193,15 +193,15 @@ class Reinvent(ReinforcementLearning):
 
 class BestAgentReminder(ReinforcementLearning):
     _short_name = 'BAR'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  prior=None, batch_size=64, sigma=60, alpha=0.5, update_freq=5, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Load prior
         if prior is None:
-            self.prior = Model.load_from_file(file_path=agent, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=agent, sampling_mode=True, device=device)
         else:
-            self.prior = Model.load_from_file(file_path=prior, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=prior, sampling_mode=True, device=device)
         # Initialize best agent
         self.best_agent = copy.deepcopy(self.agent)
         self.best_avg_score = 0
@@ -281,9 +281,9 @@ class BestAgentReminder(ReinforcementLearning):
 
 class HillClimb(ReinforcementLearning):
     _short_name = 'HC'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Parameters
         self.batch_size = batch_size
@@ -322,16 +322,16 @@ class HillClimb(ReinforcementLearning):
 
 class HillClimbRegularized(ReinforcementLearning):
     _short_name = 'HC-reg'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  prior=None, batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256,
                  entropy_coefficient=0, kl_coefficient=10, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Load prior
         if prior is None:
-            self.prior = Model.load_from_file(file_path=agent, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=agent, sampling_mode=True, device=device)
         else:
-            self.prior = Model.load_from_file(file_path=prior, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=prior, sampling_mode=True, device=device)
         # Parameters
         self.batch_size = batch_size
         self.topk = topk
@@ -376,15 +376,15 @@ class HillClimbRegularized(ReinforcementLearning):
 
 class AugmentedHillClimb(ReinforcementLearning):
     _short_name = 'AHC'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
                  prior=None, batch_size=64, sigma=60, topk=0.5, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
 
         # Load prior
         if prior is None:
-            self.prior = Model.load_from_file(file_path=agent, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=agent, sampling_mode=True, device=device)
         else:
-            self.prior = Model.load_from_file(file_path=prior, sampling_mode=True, device=device)
+            self.prior = self.model.load_from_file(file_path=prior, sampling_mode=True, device=device)
         # Parameters
         self.batch_size = batch_size
         self.sigma = sigma
