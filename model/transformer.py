@@ -196,7 +196,7 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _ = self._batch_sample(num=num)
+        seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
                   for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
@@ -210,16 +210,16 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _ = self._batch_sample(num=num, temperature=temperature)
+        seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
     def sample_sequences_and_smiles(self, num=128, temperature=1.0) -> \
             Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
-        seqs, likelihoods, probs, log_probs = self._batch_sample(num=num, temperature=temperature)
+        seqs, likelihoods, probs, log_probs, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
-        return seqs, smiles, likelihoods, probs, log_probs
+        return seqs, smiles, likelihoods, probs, log_probs, None
 
     def _batch_sample(self, num=128, batch_size=64, temperature=1.0) -> \
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
@@ -271,7 +271,7 @@ class Model:
         sequences = sequences.long()
         nlls = self.likelihood(sequences=sequences)
 
-        return sequences.data, nlls, action_probs, action_log_probs
+        return sequences.data, nlls, action_probs, action_log_probs, None
 
 
 if __name__ == '__main__':
