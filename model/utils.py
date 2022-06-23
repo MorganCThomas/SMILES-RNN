@@ -295,6 +295,8 @@ def reverse_smiles2(smiles, renumber_rings=False):
 
     # Re-number the rings in order of appearance
     if renumber_rings:
+        raise NotImplementedError
+        # Split further by rings ... 
         # Change order of ring numbering
         ring_count = 1
         ring_map = {} # Index to new ring number
@@ -306,5 +308,3 @@ def reverse_smiles2(smiles, renumber_rings=False):
                     ring_map[t] = str(ring_count)
                     ring_count += 1
         rtdsmiles = [ring_map[t] if t in ring_map.keys() else t for t in rsplitted]
-
-    # Parenthesis following atom before.
