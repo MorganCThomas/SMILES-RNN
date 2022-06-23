@@ -223,7 +223,8 @@ def reverse_smiles(smiles, renumber_rings=False):
         # Add bracket
         splitted.append(smiles[open_close_idxs[i]:open_close_idxs[i+1]+1])
     # Add bit after
-    splitted.append(smiles[open_close_idxs[-1]+1:])
+    if len(open_close_idxs) > 0:
+        splitted.append(smiles[open_close_idxs[-1]+1:])
     # Remove blanks
     splitted = [s for s in splitted if s != '']
 
