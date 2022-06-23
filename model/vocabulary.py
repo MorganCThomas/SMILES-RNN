@@ -2,9 +2,7 @@
 Vocabulary helper class from https://github.com/MolecularAI/Reinvent
 """
 
-import enum
 import re
-from winreg import REG_BINARY
 import numpy as np
 
 import deepsmiles
@@ -133,20 +131,9 @@ class DeepSMILESTokenizer:
     }
     REGEXP_ORDER = ["brackets", "brcl"]
 
-    def __init__(self, rings=True, branches=True, compress=False, branch_tokens=False, branch_bond_tokens=False):
+    def __init__(self, rings=True, branches=True, compress=False):
         self.converter = deepsmiles.Converter(rings=rings, branches=branches)
         self.run_compression = compress
-        if branch_tokens:
-            self.REGEXPS["branches"] = re.compile(r"(\)+)")
-            self.REGEXP_ORDER.insert(1, "branches")
-        # This is for reversing smiles strings
-        if branch_bond_tokens:
-            self.REGEXPS["single_branch_bonds"] = re.compile(r"(-[a-zA-Z])\)")
-            self.REGEXPS["double_branch_bonds"] = re.compile(r"(=[a-zA-Z])\)")
-            self.REGEXPS["triple_branch_bonds"] = re.compile(r"(#[a-zA-Z])\)")
-            self.REGEXP_ORDER.insert(1, "triple_branch_bonds")
-            self.REGEXP_ORDER.insert(1, "double_branch_bonds")
-            self.REGEXP_ORDER.insert(1, "single_branch_bonds")
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to deepSMILES"""
@@ -159,9 +146,6 @@ class DeepSMILESTokenizer:
                 return list(data)
             regexp = self.REGEXPS[regexps[0]]
             splitted = regexp.split(data)
-            # Might need to add bracket back in
-            if regexps[0] in ["single_branch_bonds", "double_branch_bonds", "triple_branch_bonds"]:
-                splitted = [')' + split if (i % 2 == 0) and (i != 0) else split for i, split in enumerate(splitted)]
             tokens = []
             for i, split in enumerate(splitted):
                 if i % 2 == 0:
