@@ -175,12 +175,14 @@ def reverse_smiles(smiles, renumber_rings=False):
     square_brackets = re.compile(r"(\[[^\]]*\])")
     brcl = re.compile(r"(Br|Cl)")
     rings = re.compile(r"([a-zA-Z][0-9]+)")
+    double_rings = re.compile(r"([0-9]{2})")
 
     # Find parenthesis indexes
     open_count = 0
     close_count = 0
     open_close_idxs = []
     for i, t in enumerate(smiles):
+        # Open
         if (t == '(') and (open_count == 0):
             # Grab branch source
             find_source = True
@@ -194,8 +196,15 @@ def reverse_smiles(smiles, renumber_rings=False):
             open_count += 1
         elif t == '(':
             open_count += 1
+
+        # Close
         elif t == ')':
             close_count += 1
+
+            # Look forward to see if another bracket comes straight after
+            if smiles[i+1] == '(':
+                continue
+
             if open_count == close_count:
                 open_close_idxs.append(i)
                 open_count = 0
@@ -220,7 +229,7 @@ def reverse_smiles(smiles, renumber_rings=False):
 
     # Split regex outside parenthesis
     pre_split = [re.compile("\)$")] # Ends in brackets
-    for regex in [square_brackets, brcl, rings]:
+    for regex in [square_brackets, brcl, rings, double_rings]:
         new_splitted = []
         for i, t in enumerate(splitted):
             if any([avoid.search(t) for avoid in pre_split]):
@@ -238,6 +247,16 @@ def reverse_smiles(smiles, renumber_rings=False):
             new_splitted.extend([t])
         else:
             new_splitted.extend(list(t))
+    splitted = new_splitted
+
+    # Add correction for rings following square brackets not picked up
+    new_splitted = []
+    for i, t in enumerate(splitted):
+        if re.match("[0-9]+", t) and re.match("^\[.*\]$", splitted[i-1]):
+            new_splitted.pop(-1)
+            new_splitted.append(splitted[i-1] + t)
+        else:
+            new_splitted.append(t)
     splitted = new_splitted
 
     # Reverse the tokens
