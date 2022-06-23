@@ -167,69 +167,10 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", keep_last=False):
                 rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
         return rand_smiles
 
-def reverse_smiles(smiles):
-    """
-    Reverse a smiles string while maintaining syntax
-    """
-    # Reversed tokenized list so square brackets, Br, Cl and double ring numbers remain in order
-    tokenizer = DeepSMILESTokenizer(rings=False, branch_tokens=True)
-    tdsmiles = tokenizer.tokenize(smiles, with_begin_and_end=False)
-    rtdsmiles = list(reversed(tdsmiles))
-    # Don't need to Correct brackets
-    #bracket_dict = {'(': ')', ')': '('}
-    #rtsmiles = [bracket_dict[t] if t in bracket_dict.keys() else t for t in rtsmiles]
-    # Push rings back
-    ring_idxs = [i for i, t in enumerate(rtdsmiles) if re.search("^[0-9]{1}$|^[0-9]{2}$", t)]
-    for i in ring_idxs:
-        ring = rtdsmiles.pop(i)
-        rtdsmiles.insert(i+1, ring)
-    # Push parenthesis back
-    #p_idxs = [i for i, t in enumerate(rtdsmiles) if re.search("(\)+)", t)]
-    #for i in p_idxs:
-    #    p = rtdsmiles.pop(i)
-    #    rtdsmiles.insert(i+1, p)
-    # Change order of ring numbering
-    ring_count = 1
-    ring_map = {} # Index to new ring number
-    for i, t in enumerate(rtdsmiles):
-        if re.search("^[0-9]{1}$|^[0-9]{2}$", t):
-            if t in ring_map.keys():
-                continue
-            else:
-                ring_map[t] = str(ring_count)
-                ring_count += 1
-    rtdsmiles = [ring_map[t] if t in ring_map.keys() else t for t in rtdsmiles]
-    # Push ring branches back
-    corrected_rtdsmiles = []
-    for i, t in enumerate(reversed(rtdsmiles)):
-        # Correct parenthesis
-        if re.search("\)+", t):
-            # Count non character atoms up to length of branch
-            correction_count = len(t)
-            for ci, ct in enumerate(corrected_rtdsmiles):
-                if re.search("^[0-9]+$", ct):
-                    correction_count += 1
-                elif re.search("^\)+$", ct):
-                        correction_count += (1 + len(ct))
-                else:
-                    if ci == correction_count:
-                        break
-            print(correction_count)           
-            corrected_rtdsmiles.insert(correction_count, t)
-        else:
-            corrected_rtdsmiles.insert(0, t)
-        print(''.join(corrected_rtdsmiles))
-
-    rsmiles = tokenizer.untokenize(corrected_rtdsmiles, convert_to_smiles=True)
-    return rsmiles
-
-def reverse_smiles2(smiles, renumber_rings=False):
+def reverse_smiles(smiles, renumber_rings=False):
     """
     Reverse smiles while maintaining syntax
     """
-    smiles = "CC(=O)c1cccc(-c2nn(C(C)C)c3ncnc(N)c23)c1"
-    smiles = "CCNCC1OC(n2cc(C)c(=O)[nH]c2=O)CC1O"
-
     # REGEX
     square_brackets = re.compile(r"(\[[^\]]*\])")
     brcl = re.compile(r"(Br|Cl)")
@@ -274,24 +215,33 @@ def reverse_smiles2(smiles, renumber_rings=False):
         splitted.append(smiles[open_close_idxs[i]:open_close_idxs[i+1]+1])
     # Add bit after
     splitted.append(smiles[open_close_idxs[-1]+1:])
+    # Remove blanks
+    splitted = [s for s in splitted if s != '']
 
-    # Split outside parenthesis
-    def split_non_parenthesis(splitted, regex):
+    # Split regex outside parenthesis
+    pre_split = [re.compile("\)$")] # Ends in brackets
+    for regex in [square_brackets, brcl, rings]:
         new_splitted = []
         for i, t in enumerate(splitted):
-            if re.search("\)$", t):
+            if any([avoid.search(t) for avoid in pre_split]):
                 new_splitted.extend([t])
             else:
                 new_split = [s for s in regex.split(t) if s != '']
                 new_splitted.extend(new_split)
-        return new_splitted
+        splitted = new_splitted
+        pre_split.append(regex)
 
-    for regex in [square_brackets, brcl, rings]:
-        splitted = split_non_parenthesis(splitted, regex)
+    # Now we split everything else
+    new_splitted = []
+    for i, t in enumerate(splitted):
+        if any([avoid.search(t) for avoid in pre_split]):
+            new_splitted.extend([t])
+        else:
+            new_splitted.extend(list(t))
+    splitted = new_splitted
 
     # Reverse the tokens
     rsplitted = list(reversed(splitted))
-    reverse_smiles = ''.join(rsplitted)
 
     # Re-number the rings in order of appearance
     if renumber_rings:
@@ -308,3 +258,5 @@ def reverse_smiles2(smiles, renumber_rings=False):
                     ring_map[t] = str(ring_count)
                     ring_count += 1
         rtdsmiles = [ring_map[t] if t in ring_map.keys() else t for t in rsplitted]
+
+    return ''.join(rsplitted)
