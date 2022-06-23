@@ -2,6 +2,7 @@ import io
 import re
 import os
 import gzip
+from pyrsistent import l
 import torch
 import logging
 import random
@@ -221,3 +222,89 @@ def reverse_smiles(smiles):
 
     rsmiles = tokenizer.untokenize(corrected_rtdsmiles, convert_to_smiles=True)
     return rsmiles
+
+def reverse_smiles2(smiles, renumber_rings=False):
+    """
+    Reverse smiles while maintaining syntax
+    """
+    smiles = "CC(=O)c1cccc(-c2nn(C(C)C)c3ncnc(N)c23)c1"
+    smiles = "CCNCC1OC(n2cc(C)c(=O)[nH]c2=O)CC1O"
+
+    # REGEX
+    square_brackets = re.compile(r"(\[[^\]]*\])")
+    brcl = re.compile(r"(Br|Cl)")
+    rings = re.compile(r"([a-zA-Z][0-9]+)")
+
+    # Find parenthesis indexes
+    open_count = 0
+    close_count = 0
+    open_close_idxs = []
+    for i, t in enumerate(smiles):
+        if (t == '(') and (open_count == 0):
+            # Grab branch source
+            find_source = True
+            count_back = 1
+            while find_source:
+                if re.match("[a-zA-Z]", smiles[i-count_back]):
+                    open_close_idxs.append(i-count_back)
+                    find_source = False
+                else:
+                    count_back += 1
+            open_count += 1
+        elif t == '(':
+            open_count += 1
+        elif t == ')':
+            close_count += 1
+            if open_count == close_count:
+                open_close_idxs.append(i)
+                open_count = 0
+                close_count = 0
+        else:
+            pass
+
+    # Split by parenthesis indexes
+    splitted = []
+    for i in range(0, len(open_close_idxs), 2):
+        # Add before bracket bit
+        if i == 0:
+            splitted.append(smiles[:open_close_idxs[i]])
+        else:
+            splitted.append(smiles[open_close_idxs[i-1]+1: open_close_idxs[i]])
+        # Add bracket
+        splitted.append(smiles[open_close_idxs[i]:open_close_idxs[i+1]+1])
+    # Add bit after
+    splitted.append(smiles[open_close_idxs[-1]+1:])
+
+    # Split outside parenthesis
+    def split_non_parenthesis(splitted, regex):
+        new_splitted = []
+        for i, t in enumerate(splitted):
+            if re.search("\)$", t):
+                new_splitted.extend([t])
+            else:
+                new_split = [s for s in regex.split(t) if s != '']
+                new_splitted.extend(new_split)
+        return new_splitted
+
+    for regex in [square_brackets, brcl, rings]:
+        splitted = split_non_parenthesis(splitted, regex)
+
+    # Reverse the tokens
+    rsplitted = list(reversed(splitted))
+    reverse_smiles = ''.join(rsplitted)
+
+    # Re-number the rings in order of appearance
+    if renumber_rings:
+        # Change order of ring numbering
+        ring_count = 1
+        ring_map = {} # Index to new ring number
+        for i, t in enumerate(rsplitted):
+            if re.search(".[0-9]{1}$|.[0-9]{2}$", t):
+                if t in ring_map.keys():
+                    continue
+                else:
+                    ring_map[t] = str(ring_count)
+                    ring_count += 1
+        rtdsmiles = [ring_map[t] if t in ring_map.keys() else t for t in rsplitted]
+
+    # Parenthesis following atom before.
