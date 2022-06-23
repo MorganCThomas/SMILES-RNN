@@ -6,8 +6,9 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import torch
-from model.rnn import Model
+from model.rnn import Model as RNNModel
 from model.transformer import Model as TransformerModel
+from model.GTr import Model as StableTransformerModel
 from model import utils
 
 
@@ -24,7 +25,12 @@ class ReinforcementLearning:
                  freeze=None):
         # Device
         self.device = device
-        self.model = Model if model == 'RNN' else TransformerModel
+        if model == 'RNN':
+            self.model = RNNModel
+        elif model == 'Transformer':
+            self.model = TransformerModel
+        else: # GTr
+            self.model = StableTransformerModel
         # Load agent
         self.agent = self.model.load_from_file(file_path=agent, sampling_mode=False, device=device)
         # Scoring function

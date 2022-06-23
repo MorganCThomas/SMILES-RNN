@@ -60,7 +60,7 @@ def get_args():
     required = parser.add_argument_group('Required arguments')
     required.add_argument('-p', '--prior', type=str, help='Path to prior checkpoint (.ckpt)', required=True)
     required.add_argument('-m', '--molscore_config', type=str, help='Path to molscore config (.json)', required=True)
-    required.add_argument('--model', type=str, choices=['RNN', 'Transformer'], help='Choice of architecture')
+    required.add_argument('--model', type=str, choices=['RNN', 'Transformer', 'GTr'], help='Choice of architecture')
 
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('-a', '--agent', type=str, help='Path to agent checkpoint (.ckpt)')
