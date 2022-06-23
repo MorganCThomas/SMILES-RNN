@@ -1,7 +1,4 @@
-"""
-Simple transformer encoder for SMILES generation
-"""
-
+from turtle import position
 from typing import List, Tuple, Union
 import math
 import numpy as np
@@ -10,7 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as tf
 
 import model.vocabulary as voc
-
 
 class PositionalEncoding(nn.Module):
 
@@ -33,42 +29,99 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
 
-class TransformerEncoder(nn.Module):
-    """
-    Implements a N stacked multi-headed attention network for molecule generation
-    """
-    def __init__(self, voc_size, n_heads=8, n_dims=256, ff_dims=1024, n_layers=4, dropout=0.):
-        super(TransformerEncoder, self).__init__()
+
+class PositionwiseFF(nn.Module):
+    def __init__(self, d_input, d_inner, dropout):
+        super(PositionwiseFF, self).__init__()
+
+        self.d_input = d_input
+        self.d_inner = d_inner
+        self.dropout = dropout
+        self.ff = nn.Sequential(
+            nn.Linear(d_input, d_inner),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(d_inner, d_input),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, input_):
+        ff_out = self.ff(input_)
+        return ff_out
+        
+
+class GatingMechanism(nn.Module):
+    def __init__(self, d_input, bg=0.1):
+        super(GatingMechanism, self).__init__()
+        self.Wr = nn.Linear(d_input, d_input)
+        self.Ur = nn.Linear(d_input, d_input)
+        self.Wz = nn.Linear(d_input, d_input)
+        self.Uz = nn.Linear(d_input, d_input)
+        self.Wg = nn.Linear(d_input, d_input)
+        self.Ug = nn.Linear(d_input, d_input)
+        self.bg = bg
+
+        self.sigmoid = nn.Sigmoid()
+        self.tanh = nn.Tanh()
+
+    def forward(self, x, y):
+        r = self.sigmoid(self.Wr(y) + self.Ur(x))
+        z = self.sigmoid(self.Wz(y) + self.Uz(x) - self.bg)
+        h = self.tanh(self.Wg(y) + self.Ug(torch.mul(r, x)))
+        g = torch.mul(1 - z, x) + torch.mul(z, h)
+        return g
+
+
+class StableTransformerEncoderLayer(nn.Module):
+    def __init__(self, n_dims, n_heads, ff_dims, dropout=0.0, gating=True):
+        super(StableTransformerEncoderLayer, self).__init__()
+
+        self.gating = gating
+        self.dropout = nn.Dropout(dropout)
+        self.gate1 = GatingMechanism(n_dims)
+        self.gate2 = GatingMechanism(n_dims)
+        self.mha = nn.MultiheadAttention(embed_dim=n_dims, num_heads=n_heads, dropout=dropout, bias=False)
+        self.ff = PositionwiseFF(n_dims, ff_dims, dropout)
+        self.norm1 = nn.LayerNorm(n_dims)
+        self.norm2 = nn.LayerNorm(n_dims)
+
+    def forward(self, src, src_mask=None):
+        x2 = self.norm1(src)
+        x2 = self.mha(x2, x2, x2, attn_mask=src_mask, need_weights=False)[0]
+        x2 = self.dropout(x2)
+        x = self.gate1(src, x2) if self.gating else src + x2
+        x2 = self.ff(self.norm2(x))
+        x = self.gate2(x, x2) if self.gating else x + x2
+        return self.dropout(x)
+
+
+class StableTransformerEncoder(nn.Module):
+    def __init__(self, voc_size, n_heads=8, n_dims=512, ff_dims=1024, n_layers=4, dropout=0., dropouta=0.1, gating=True):
+        super(StableTransformerEncoder, self).__init__()
 
         self._nheads = n_heads
-        self._n_dims = n_dims
+        self._ndims = n_dims
         self._ff_dims = ff_dims
         self._dropout = dropout
-        self._num_layers = n_layers
-        self._layer_normalization=False
+        self._n_layers = n_layers
+        self._dropouta = dropouta
+        self._gating = gating
 
-        self._embedding = nn.Embedding(voc_size, self._n_dims)
-        self._positional_encoder = PositionalEncoding(self._n_dims, dropout=self._dropout)  # Same dim as embedding
-        encoder_layer = nn.TransformerEncoderLayer(self._n_dims, self._nheads, self._ff_dims, dropout=self._dropout)
-        encoder_norm = nn.LayerNorm(self._n_dims)
-        self._encoder = nn.TransformerEncoder(encoder_layer, self._num_layers, encoder_norm)
-        self._linear = nn.Linear(self._n_dims, voc_size)
+        self._embedding = nn.Embedding(voc_size, self._ndims)
+        self._positional_encoder = PositionalEncoding(self._ndims, dropout=self._dropout)
+        encoder_layer = StableTransformerEncoderLayer(self._ndims, self._nheads, self._ff_dims, self._dropout, self._gating)
+        self._encoder = torch.nn.ModuleList([encoder_layer]*self._n_layers)
+        self._linear = nn.Linear(self._ndims, voc_size)
 
-    def forward(self, seqs, no_mask=False):
-        """
-        Performs forward pass on the model (Transpose input and Output for consistent API with Model)
-        :param sequences: Input tensor (batch_size, seq_size)
-        :return: Output tensor (batch_size, seq_size, voc_size)
-        """
+    def forward(self, seqs):
         seqs = seqs.T
-        if no_mask:
-            mask = None
-        else:
-            mask = TransformerEncoder.generate_square_subsequent_mask(seqs.shape[0])#.to(self.device)
         embedded = self._embedding(seqs)
+        mask = StableTransformerEncoder.generate_square_subsequent_mask(seqs.shape[0])
         positional_encoded = self._positional_encoder(embedded)
-        encoded = self._encoder(positional_encoded, mask=mask)
-        out = self._linear(encoded).transpose(1, 0) # Transpose to batch first to be consistent with api
+        out = positional_encoded
+        for layer in self._encoder:
+            out = layer(out, src_mask=mask)
+        out = self._linear(out).transpose(1, 0)
         return out
 
     @staticmethod
@@ -82,11 +135,13 @@ class TransformerEncoder(nn.Module):
         """
         return {
             'n_heads': self._nheads,
-            'n_dims': self._n_dims,
+            'n_dims': self._ndims,
             'ff_dims': self._ff_dims,
-            'n_layers': self._num_layers,
-            'dropout': self._dropout
+            'n_layers': self._n_layers,
+            'dropout': self._dropout,
+            'gating': self._gating
         }
+
 
 class Model:
     """
@@ -110,7 +165,7 @@ class Model:
         if not isinstance(network_params, dict):
             network_params = {}
 
-        self.network = TransformerEncoder(len(self.vocabulary), **network_params)
+        self.network = StableTransformerEncoder(len(self.vocabulary), **network_params)
         self.network.to(self.device)
 
         self._nll_loss = nn.NLLLoss(reduction="none")
@@ -240,7 +295,7 @@ class Model:
                 input_vectors[:, 0] = self.vocabulary["^"]
                 sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
                 for t in range(1, self.max_sequence_length - 1):
-                    logits = self.network(input_vectors[:, :t], no_mask=False)[:, -1, :] # Final prediction only
+                    logits = self.network(input_vectors[:, :t])[:, -1, :] # Final prediction only
                     logits = logits / temperature
                     probabilities = logits.softmax(dim=1)
                     log_probs = logits.log_softmax(dim=1)
