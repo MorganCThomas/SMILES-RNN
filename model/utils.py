@@ -139,7 +139,9 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", keep_last=False):
         for i in range(n_rand):
         #while len(rand_smiles) < n_rand:
             if keep_last:
-                random_smiles = Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False, rootedAtAtom=len(smi))
+                random_smiles = Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False, rootedAtAtom=mol.GetNumAtoms()-1)
+                random_smiles = reverse_smiles(random_smiles)
+                rand_smiles.append(random_smiles)
             else:
                 rand_smiles.append(Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False))
         return list(set(rand_smiles))
@@ -152,20 +154,17 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", keep_last=False):
                 new_atom_order = list(range(mol.GetNumAtoms()))
                 last_atom = new_atom_order.pop(-1)
                 random.shuffle(new_atom_order)
-                new_atom_order.append(last_atom)
+                new_atom_order = [last_atom] + new_atom_order
                 random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
-                # Check last atom is still last atom... ? How?
                 random_smiles = Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False)
-                # Atleast if it's a different symbol ignore
-                if smi[-1] != random_smiles[-1]:
-                    continue
+                random_smiles = reverse_smiles(random_smiles)
                 rand_smiles.append(random_smiles)
             else:
                 new_atom_order = list(range(mol.GetNumAtoms()))
                 random.shuffle(new_atom_order)
                 random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
                 rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
-        return rand_smiles
+        return list(set(rand_smiles))
 
 def reverse_smiles(smiles, renumber_rings=False):
     """
