@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as tf
 
 import model.vocabulary as voc
+from model.utils import randomize_smiles
 
 
 class RNN(nn.Module):
@@ -376,6 +377,13 @@ class Model:
             seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         return seqs, smiles, likelihoods, probs, log_probs, values
+
+    def _preferred_smiles(self, smiles):
+        alt_smiles = list(set([smiles] + randomize_smiles(smiles, keep_last=True) + randomize_smiles(smiles, random_type='unrestricted', keep_last=True)))
+        with torch.no_grad():
+            nlls = self.likelihood_smiles(alt_smiles).cpu().numpy()
+        preferred_smiles, nll = list(sorted(zip(alt_smiles, nlls), key=lambda x: x[1]))[0]
+        return preferred_smiles, nll
 
     def RNN2Critic(self):
         self.network = RNNCritic(self.network)
