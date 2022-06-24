@@ -356,6 +356,7 @@ class Model:
             :likelihoods: (n) A list of likelihoods.
         """
         if partial is not None:
+            partial, _ = self._preferred_smiles(partial)
             tokens = self.tokenizer.tokenize(partial)
             encoded = self.vocabulary.encode(tokens)
             pseq = torch.tensor(encoded, dtype=torch.long)
@@ -369,6 +370,7 @@ class Model:
     def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0, partial=None) -> \
             Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         if partial is None:
+            partial, _ = self._preferred_smiles(partial)
             tokens = self.tokenizer.tokenize(partial)
             encoded = self.vocabulary.encode(tokens)
             pseq = torch.tensor(encoded, dtype=torch.long)
