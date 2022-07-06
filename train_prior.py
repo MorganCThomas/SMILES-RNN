@@ -220,7 +220,7 @@ def get_args():
                           help='Training smiles will be randomized using default arguments (10 restricted)')
     optional.add_argument('--valid_smiles', help='Validation smiles')
     optional.add_argument('--test_smiles', help='Test smiles')
-    optional.add_argument('--validate_frequency', default=500, help=' ')
+    optional.add_argument('--validate_frequency', type=int, default=500, help=' ')
     optional.add_argument('--n_epochs', type=int, default=5, help=' ')
     optional.add_argument('--batch_size', type=int, default=128, help=' ')
     optional.add_argument('-d', '--device', default='gpu', help='cpu/gpu or device number')
