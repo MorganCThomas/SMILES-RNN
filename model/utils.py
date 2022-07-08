@@ -2,7 +2,6 @@ import io
 import re
 import os
 import gzip
-from pyrsistent import l
 import torch
 import logging
 import random
