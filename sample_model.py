@@ -33,7 +33,10 @@ def main(args):
     model = Model.load_from_file(file_path=args.model, sampling_mode=True, device=device)
 
     # Sample TODO different sample modes e.g. beam search, temperature
-    smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
+    if args.native:
+        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature)
+    else:
+        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:
@@ -43,8 +46,12 @@ def main(args):
 
         logger.info(f'Topping up {len(set(canonical_smiles))} smiles')
         while (len(set(canonical_smiles)) < args.number):
-            new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
-                                                temperature=args.temperature)
+            if args.native:
+                new_smiles, _ = model.sample_native(num=(args.number - len(set(canonical_smiles))),
+                                                    temperature=args.temperature)
+            else:
+                new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
+                                                    temperature=args.temperature)
             new_canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in new_smiles
                                     if Chem.MolFromSmiles(smi)]
             canonical_smiles += new_canonical_smiles
@@ -67,6 +74,7 @@ def get_args():
     parser.add_argument('-t', '--temperature', type=float, default=1.0,
                         help='Temperature to sample (1: multinomial, <1: Less random, >1: More random)')
     parser.add_argument('--unique', action='store_true', help='Keep sampling until n unique canonical molecules have been sampled')
+    parser.add_argument('--native', action='store_true', help='If trained using an alternative grammar e.g., SELFIES. don\'t convet back to SMILES')
     args = parser.parse_args()
     return args
 

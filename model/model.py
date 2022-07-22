@@ -323,7 +323,7 @@ class Model:
             kls[i] = torch.tensor(seq_kls).mean()
         return kls
 
-    def sample_native(self, num=128, batch_size=128) -> Tuple[List, np.array]:
+    def sample_native(self, num=128, batch_size=128, temperature=1.0) -> Tuple[List, np.array]:
         """
         Samples n strings from the model according to the native grammar.
         :param num: Number of SMILES to sample.
@@ -332,7 +332,7 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
+        seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
                   for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
