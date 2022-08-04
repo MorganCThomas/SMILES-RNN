@@ -242,7 +242,7 @@ class Model:
         log_probs = logits.log_softmax(dim=2)
         return self._nll_loss(log_probs.transpose(1, 2), sequences[:, 1:]).sum(dim=1)
 
-    def sample_native(self, num=128) -> Tuple[List, np.array]:
+    def sample_native(self, num=128, temperature=1.0) -> Tuple[List, np.array]:
         """
         Samples n strings from the model according to the native grammar.
         :param num: Number of SMILES to sample.
@@ -251,10 +251,14 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _, _ = self._batch_sample(num=num)
-        smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
-                  for seq in seqs.cpu().numpy()]
-        likelihoods = likelihoods.data.cpu().numpy()
+        smiles = []
+        likelihoods = []
+        batch_sizes = [64 for _ in range(num // 64)]
+        batch_sizes += [num % 64] if num % 64 != 0 else []
+        for size in batch_sizes:
+            batch_seqs, batch_likelihoods, _, _, _ = self._batch_sample(num=size, temperature=temperature)
+            smiles.extend([self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False) for seq in batch_seqs.cpu().numpy()])
+            likelihoods.extend(batch_likelihoods.data.cpu().numpy())
         return smiles, likelihoods
 
     def sample_smiles(self, num=128, temperature=1.0) -> Tuple[List, np.array]:
@@ -265,9 +269,14 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
-        smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
-        likelihoods = likelihoods.data.cpu().numpy()
+        smiles = []
+        likelihoods = []
+        batch_sizes = [64 for _ in range(num // 64)]
+        batch_sizes += [num % 64] if num % 64 != 0 else []
+        for size in batch_sizes:
+            batch_seqs, batch_likelihoods, _, _, _ = self._batch_sample(num=size, temperature=temperature)
+            smiles.extend([self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in batch_seqs.cpu().numpy()])
+            likelihoods.extend(batch_likelihoods.data.cpu().numpy())
         return smiles, likelihoods
 
     def sample_sequences_and_smiles(self, num=128, temperature=1.0) -> \
