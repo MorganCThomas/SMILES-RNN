@@ -7,7 +7,9 @@ import logging
 from rdkit import rdBase
 from rdkit.Chem import AllChem as Chem
 
-from model.model import *
+from model.rnn import *
+from model.transformer import Model as TransformerModel
+from model.GTr import Model as StableTransformerModel
 from model import utils
 
 rdBase.DisableLog("rdApp.error")
@@ -30,13 +32,18 @@ def main(args):
     logger.info(f'Device set to {device.type}')
 
     # Load model
-    model = Model.load_from_file(file_path=args.model, sampling_mode=True, device=device)
-
-    # Sample TODO different sample modes e.g. beam search, temperature
-    if args.native:
-        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature)
+    if args.model == 'RNN':
+        model = Model.load_from_file(file_path=args.path, sampling_mode=True, device=device)
+    elif args.model == 'Transformer':
+        model = TransformerModel.load_from_file(file_path=args.path, sampling_mode=True, device=device)
+    elif args.model == 'GTr':
+        model = StableTransformerModel.load_from_file(file_path=args.path, sampling_mode=True, device=device)
     else:
-        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
+        print("Model must be either [RNN, Transformer, GTr]")
+        raise KeyError
+    
+    # Sample TODO different sample modes e.g. beam search
+    smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:
@@ -67,7 +74,8 @@ def main(args):
 def get_args():
     parser = argparse.ArgumentParser(description='Sample smiles from model',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-m', '--model', type=str, help='Path to checkpoint (.ckpt)', required=True)
+    parser.add_argument('-p', '--path', type=str, help='Path to checkpoint (.ckpt)', required=True)
+    parser.add_argument('-m', '--model', type=str, help='Choice of architecture', choices=['RNN', 'Transformer', 'GTr'], required=True)
     parser.add_argument('-o', '--output', type=str, help='Path to save file (e.g. Data/Prior_10k.smi)', required=True)
     parser.add_argument('-d', '--device', default='gpu', help=' ')
     parser.add_argument('-n', '--number', type=int, default=10000, help=' ')

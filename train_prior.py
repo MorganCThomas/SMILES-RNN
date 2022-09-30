@@ -11,7 +11,9 @@ from itertools import chain
 from torch.utils.tensorboard import SummaryWriter
 
 from model.vocabulary import *
-from model.model import *
+from model.rnn import *
+from model.transformer import Model as TransformerModel
+from model.GTr import Model as StableTransformerModel
 from model.dataset import *
 from model import utils
 from model.utils import randomize_smiles
@@ -89,20 +91,50 @@ def main(args):
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
                                              shuffle=True, collate_fn=Dataset.collate_fn)
 
-    # Set network params
-    network_params = {
-        "layer_size": args.layer_size,
-        "num_layers": args.num_layers,
-        "cell_type": args.cell_type,
-        "embedding_layer_size": args.embedding_layer_size,
-        "dropout": args.dropout,
-        "layer_normalization": args.layer_normalization
-    }
-
-    # Create model
-    logger.info('Loading model')
-    prior = Model(vocabulary=smiles_vocab, tokenizer=tokenizer,
-                  network_params=network_params, max_sequence_length=256, device=device)
+    if args.model == 'RNN':
+        # Set network params
+        network_params = {
+            "layer_size": args.layer_size,
+            "num_layers": args.num_layers,
+            "cell_type": args.cell_type,
+            "embedding_layer_size": args.embedding_layer_size,
+            "dropout": args.dropout,
+            "layer_normalization": args.layer_normalization
+        }
+        # Create model
+        logger.info('Loading model')
+        prior = Model(vocabulary=smiles_vocab, tokenizer=tokenizer,
+                    network_params=network_params, max_sequence_length=256, device=device)
+    elif args.model == 'Transformer':
+        # Set network params
+        network_params = {
+            "n_heads": args.n_heads,
+            "n_dims": args.n_dims,
+            "ff_dims": args.ff_dims,
+            "n_layers": args.n_layers,
+            "dropout": args.dropout
+        }
+        # Create model
+        logger.info('Loading model')
+        prior = TransformerModel(vocabulary=smiles_vocab, tokenizer=tokenizer,
+                            network_params=network_params, max_sequence_length=256, device=device)
+    elif args.model == 'GTr':
+        # Set network params
+        network_params = {
+            "n_heads": args.n_heads,
+            "n_dims": args.n_dims,
+            "ff_dims": args.ff_dims,
+            "n_layers": args.n_layers,
+            "dropout": args.dropout,
+            "gating": True
+        }
+        # Create model
+        logger.info('Loading model')
+        prior = StableTransformerModel(vocabulary=smiles_vocab, tokenizer=tokenizer,
+                                    network_params=network_params, max_sequence_length=256, device=device)
+    else:
+        print("Model must be of type [RNN, Transformer, GTr]")
+        raise KeyError
 
     # Setup optimizer TODO update to adaptive learning
     optimizer = torch.optim.Adam(prior.network.parameters(), lr=args.learning_rate)
@@ -206,33 +238,53 @@ def main(args):
 def get_args():
     parser = argparse.ArgumentParser(description='Train an initial prior model based on smiles data',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    required = parser.add_argument_group('Required arguments')
+    required = parser.add_argument_group('required arguments')
     required.add_argument('-i', '--train_smiles', type=str, help='Path to smiles file')
     required.add_argument('-o', '--output_directory', type=str, help='Output directory to save model')
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files')
 
-    optional = parser.add_argument_group('Optional arguments')
-    optional.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_cr',
+    #optional = parser.add_argument_group('Optional arguments')
+    parser.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_cr',
                                                 'deepSMILES_c', 'deepSMILES_cb', 'deepSMILES_b', 'SELFIES'],
                           default='SMILES',
                           help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
-    optional.add_argument('--randomize', action='store_true',
+    parser.add_argument('--randomize', action='store_true',
                           help='Training smiles will be randomized using default arguments (10 restricted)')
-    optional.add_argument('--valid_smiles', help='Validation smiles')
-    optional.add_argument('--test_smiles', help='Test smiles')
-    optional.add_argument('--validate_frequency', type=int, default=500, help=' ')
-    optional.add_argument('--n_epochs', type=int, default=5, help=' ')
-    optional.add_argument('--batch_size', type=int, default=128, help=' ')
-    optional.add_argument('-d', '--device', default='gpu', help='cpu/gpu or device number')
 
-    network = parser.add_argument_group('Network parameters')
-    network.add_argument('--layer_size', type=int, default=512, help=' ')
-    network.add_argument('--num_layers', type=int, default=3, help=' ')
-    network.add_argument('--cell_type', choices=['lstm', 'gru'], default='gru', help=' ')
-    network.add_argument('--embedding_layer_size', type=int, default=256, help=' ')
-    network.add_argument('--dropout', type=float, default=0.0, help=' ')
-    network.add_argument('--learning_rate', type=float, default=1e-3, help=' ')
-    network.add_argument('--layer_normalization', action='store_true')
+    parser.add_argument('--valid_smiles', help='Validation smiles')
+    parser.add_argument('--test_smiles', help='Test smiles')
+    parser.add_argument('--validate_frequency', default=500, help=' ')
+    parser.add_argument('--n_epochs', type=int, default=5, help=' ')
+    parser.add_argument('--batch_size', type=int, default=128, help=' ')
+    parser.add_argument('-d', '--device', default='gpu', help='cpu/gpu or device number')
+
+    subparsers = parser.add_subparsers(help='Model architecture', dest='model')
+
+    rnn = subparsers.add_parser('RNN', help='Use simple forward RNN with GRU or LSTM')
+    rnn.add_argument('--layer_size', type=int, default=512, help=' ')
+    rnn.add_argument('--num_layers', type=int, default=3, help=' ')
+    rnn.add_argument('--cell_type', choices=['lstm', 'gru'], default='gru', help=' ')
+    rnn.add_argument('--embedding_layer_size', type=int, default=256, help=' ')
+    rnn.add_argument('--dropout', type=float, default=0.0, help=' ')
+    rnn.add_argument('--learning_rate', type=float, default=1e-3, help=' ')
+    rnn.add_argument('--layer_normalization', action='store_true')
+
+    transformer = subparsers.add_parser('Transformer', help='TransformerEncoder model')
+    transformer.add_argument('--n_heads', type=int, default=8, help='Number of attention heads')
+    transformer.add_argument('--n_dims', type=int, default=512, help=' ')
+    transformer.add_argument('--ff_dims', type=int, default=1024, help='Size of final linear layer')
+    transformer.add_argument('--n_layers', type=int, default=4, help='Number of stacked sub-encoders')
+    transformer.add_argument('--dropout', type=float, default=0.1, help=' ')
+    transformer.add_argument('--learning_rate', type=float, default=1e-3, help=' ')
+
+    GTr = subparsers.add_parser('GTr', help='StableTransformerEncoder model')
+    GTr.add_argument('--n_heads', type=int, default=8, help='Number of attention heads')
+    GTr.add_argument('--n_dims', type=int, default=512, help=' ')
+    GTr.add_argument('--ff_dims', type=int, default=1024, help='Size of final linear layer')
+    GTr.add_argument('--n_layers', type=int, default=4, help='Number of stacked sub-encoders')
+    GTr.add_argument('--dropout', type=float, default=0.1, help=' ')
+    GTr.add_argument('--learning_rate', type=float, default=1e-3, help=' ')
+    
     return parser.parse_args()
 
 
