@@ -22,6 +22,7 @@ class ReinforcementLearning:
                  optimizer,
                  learning_rate,
                  is_molscore=True,
+                 psmiles=None,
                  freeze=None):
         # Device
         self.device = device
@@ -37,7 +38,7 @@ class ReinforcementLearning:
             self._freeze_network(freeze)
         self.record = None
         # Secret smiles prefix
-        self._smiles_prefix = None
+        self.psmiles = psmiles
 
     def train(self, n_steps, save_freq):
         for step in tqdm(range(n_steps), total=n_steps):
@@ -68,9 +69,7 @@ class ReinforcementLearning:
 
     def _sample_batch(self, batch_size):
         seqs, smiles, agent_likelihood, probs, log_probs, critic_values = self.agent.sample_sequences_and_smiles(
-            batch_size)
-        if self._smiles_prefix is not None:
-            smiles = [self._smiles_prefix + smi for smi in smiles]
+            batch_size, partial=self.psmiles)
         return seqs, smiles, agent_likelihood, probs, log_probs, critic_values
 
     def _score(self, smiles, step):
@@ -99,9 +98,9 @@ class ReinforcementLearning:
 
 class Reinforce(ReinforcementLearning):
     _short_name = 'RF'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  batch_size=64, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles=psmiles, freeze=None)
 
         # Parameters
         self.batch_size = batch_size
@@ -124,9 +123,9 @@ class Reinforce(ReinforcementLearning):
 
 class ReinforceRegularized(ReinforcementLearning):
     _short_name = 'RF-reg'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  prior=None, batch_size=64, entropy_coefficient=0, kl_coefficient=10, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles=psmiles, freeze=None)
 
         # Load prior
         if prior is None:
@@ -157,9 +156,9 @@ class ReinforceRegularized(ReinforcementLearning):
 
 class Reinvent(ReinforcementLearning):
     _short_name = 'RV'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  prior=None, batch_size=64, sigma=60, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles, freeze=None)
 
         # Load prior
         if prior is None:
@@ -193,9 +192,9 @@ class Reinvent(ReinforcementLearning):
 
 class BestAgentReminder(ReinforcementLearning):
     _short_name = 'BAR'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  prior=None, batch_size=64, sigma=60, alpha=0.5, update_freq=5, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles=psmiles, freeze=None)
 
         # Load prior
         if prior is None:
@@ -281,9 +280,9 @@ class BestAgentReminder(ReinforcementLearning):
 
 class HillClimb(ReinforcementLearning):
     _short_name = 'HC'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles=psmiles, freeze=None)
 
         # Parameters
         self.batch_size = batch_size
@@ -322,10 +321,10 @@ class HillClimb(ReinforcementLearning):
 
 class HillClimbRegularized(ReinforcementLearning):
     _short_name = 'HC-reg'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  prior=None, batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256,
                  entropy_coefficient=0, kl_coefficient=10, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles=psmiles, freeze=None)
 
         # Load prior
         if prior is None:
@@ -376,9 +375,9 @@ class HillClimbRegularized(ReinforcementLearning):
 
 class AugmentedHillClimb(ReinforcementLearning):
     _short_name = 'AHC'
-    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  prior=None, batch_size=64, sigma=60, topk=0.5, **kwargs):
-        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles=psmiles, freeze=None)
 
         # Load prior
         if prior is None:
