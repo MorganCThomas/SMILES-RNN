@@ -55,7 +55,7 @@ def main(args):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Optimize an RNN towards a reward via reinforment learning',
+    parser = argparse.ArgumentParser(description='Optimize a model towards a reward via reinforment learning',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     required = parser.add_argument_group('Required arguments')
     required.add_argument('-p', '--prior', type=str, help='Path to prior checkpoint (.ckpt)', required=True)

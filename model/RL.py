@@ -90,7 +90,6 @@ class ReinforcementLearning:
                                   os.path.join(self.save_dir,
                                                f'failed_{self.scoring_function.step}.smi'))
                 self.agent.save(os.path.join(self.save_dir, f'Agent_{step}.ckpt'))
-                self.scoring_function.write_scores()
                 self.scoring_function._write_temp_state(step=self.scoring_function.step)
                 self.scoring_function.kill_monitor()
                 raise e
