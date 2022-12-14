@@ -9,6 +9,7 @@ import numpy as np
 from model.vocabulary import SMILESTokenizer, DeepSMILESTokenizer
 import torch.utils.tensorboard.summary as tbxs
 from rdkit import Chem
+from rdkit.Chem import Descriptors
 import rdkit.Chem.Draw as Draw
 
 logger = logging.getLogger('utils')
@@ -118,17 +119,23 @@ def add_image(writer, tag, image, global_step=None, walltime=None):
     summary = tbxs.Summary(value=[tbxs.Summary.Value(tag=tag, image=summary_image)])
     writer.file_writer.add_summary(summary, global_step, walltime)
 
-def randomize_smiles(smi, n_rand=10, random_type="restricted", keep_last=False):
+def randomize_smiles(smi, n_rand=10, random_type="restricted", rootAtom=None, reverse=False):
     """
     Returns a random SMILES given a SMILES of a molecule.
     :param smi: A SMILES string
     :param n_rand: Number of randomized smiles per molecule
     :param random_type: The type (unrestricted, restricted) of randomization performed.
-    :param keep_last: Whether to try and enforce the last atom as always the last atom, not always possible so checked at a later point
+    :param rootAtom: Root smiles generation to begin with this atom, -1 denotes the last atom)
     :return : A random SMILES string of the same molecule or None if the molecule is invalid.
     """
     assert random_type in ['restricted', 'unrestricted'], f"Type {random_type} is not valid"
+    
+    # Convert leading wildcard out of parenthesis if presented that way
+    if smi.startswith('(*)'):
+        smi = re.sub('\(\*\)', '*', smi, count=1)
+
     mol = Chem.MolFromSmiles(smi)
+    assert Descriptors.RingCount(mol) < 10, "More than ten rings, uncertain about SMILES reversal behaviour"
 
     if not mol:
         return None
@@ -136,39 +143,49 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", keep_last=False):
     if random_type == "unrestricted":
         rand_smiles = []
         for i in range(n_rand):
-        #while len(rand_smiles) < n_rand:
-            if keep_last:
-                random_smiles = Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False, rootedAtAtom=mol.GetNumAtoms()-1)
-                random_smiles = reverse_smiles(random_smiles)
-                rand_smiles.append(random_smiles)
+            if rootAtom is not None:
+                if rootAtom == -1:
+                    rootAtom = mol.GetNumAtoms()-1
+                random_smiles = Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False, rootedAtAtom=rootAtom)
             else:
-                rand_smiles.append(Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False))
+                random_smiles = Chem.MolToSmiles(mol, canonical=False, doRandom=True, isomericSmiles=False)
+            
+            if reverse:
+                assert "*" not in smi, "Unexpected behaviour when smiles contain a wildcard character (*), please use restricted randomization"
+                random_smiles = reverse_smiles(random_smiles)
+            
+            rand_smiles.append(random_smiles)
+                
         return list(set(rand_smiles))
 
     if random_type == "restricted":
         rand_smiles = []
         for i in range(n_rand):
-        #while len(rand_smiles) < n_rand:
-            if keep_last:
+            if rootAtom is not None:
                 new_atom_order = list(range(mol.GetNumAtoms()))
-                last_atom = new_atom_order.pop(-1)
+                root_atom = new_atom_order.pop(rootAtom) # -1
                 random.shuffle(new_atom_order)
-                new_atom_order = [last_atom] + new_atom_order
+                new_atom_order = [root_atom] + new_atom_order
                 random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
                 random_smiles = Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False)
-                random_smiles = reverse_smiles(random_smiles)
-                rand_smiles.append(random_smiles)
             else:
                 new_atom_order = list(range(mol.GetNumAtoms()))
                 random.shuffle(new_atom_order)
                 random_mol = Chem.RenumberAtoms(mol, newOrder=new_atom_order)
-                rand_smiles.append(Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False))
+                random_smiles = Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False)
+
+            if reverse:
+                random_smiles = reverse_smiles(random_smiles)
+                
+            rand_smiles.append(random_smiles)
+
         return list(set(rand_smiles))
 
-def reverse_smiles(smiles, renumber_rings=False):
+def reverse_smiles(smiles, renumber_rings=False, v=False):
     """
     Reverse smiles while maintaining syntax
     """
+    if v: print(f'Reversing: {smiles}')
     # REGEX
     square_brackets = re.compile(r"(\[[^\]]*\])")
     brcl = re.compile(r"(Br|Cl)")
@@ -209,6 +226,7 @@ def reverse_smiles(smiles, renumber_rings=False):
                 close_count = 0
         else:
             pass
+    if v: print(f'Parenthesis identified:\n\t {open_close_idxs}')
 
     # Split by parenthesis indexes
     splitted = []
@@ -225,6 +243,7 @@ def reverse_smiles(smiles, renumber_rings=False):
         splitted.append(smiles[open_close_idxs[-1]+1:])
     # Remove blanks
     splitted = [s for s in splitted if s != '']
+    if v: print(f'Parenthesis split:\n\t {splitted}')
 
     # Split regex outside parenthesis
     pre_split = [re.compile("\)$")] # Ends in brackets
@@ -238,6 +257,7 @@ def reverse_smiles(smiles, renumber_rings=False):
                 new_splitted.extend(new_split)
         splitted = new_splitted
         pre_split.append(regex)
+    if v: print(f'Tokenize outside:\n\t {splitted}')
 
     # Now we split everything else
     new_splitted = []
@@ -247,6 +267,7 @@ def reverse_smiles(smiles, renumber_rings=False):
         else:
             new_splitted.extend(list(t))
     splitted = new_splitted
+    if v: print(f'Tokenize anything else:\n\t {splitted}')
 
     # Add correction for rings following square brackets not picked up
     new_splitted = []
@@ -257,9 +278,12 @@ def reverse_smiles(smiles, renumber_rings=False):
         else:
             new_splitted.append(t)
     splitted = new_splitted
+    if v: print(f'Correct rings following square brackets:\n\t {splitted}')
 
     # Reverse the tokens
     rsplitted = list(reversed(splitted))
+    if v: print(f'Reversed tokens:\n\t {rsplitted}')
+    if v: print(f'Reversed smiles: {"".join(rsplitted)}')
 
     # Re-number the rings in order of appearance
     if renumber_rings:

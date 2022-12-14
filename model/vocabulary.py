@@ -86,7 +86,8 @@ class SMILESTokenizer:
     REGEXPS = {
         "brackets": re.compile(r"(\[[^\]]*\])"),
         "2_ring_nums": re.compile(r"(%\d{2})"),
-        "brcl": re.compile(r"(Br|Cl)")
+        "brcl": re.compile(r"(Br|Cl)"),
+        "atom": re.compile(r"[a-zA-Z]")
     }
     REGEXP_ORDER = ["brackets", "2_ring_nums", "brcl"]
 
