@@ -43,7 +43,10 @@ def main(args):
         raise KeyError
     
     # Sample TODO different sample modes e.g. beam search
-    smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
+    if args.native:
+        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature)
+    else:
+        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:

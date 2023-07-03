@@ -36,7 +36,7 @@ def main(args):
 
     # Save all args out
     with open(os.path.join(args.output_directory, 'params.json'), 'wt') as f:
-        json.dump(vars(args), f)
+        json.dump(vars(args), f, indent=2)
 
     # Set device
     device = utils.set_default_device_cuda(args.device)
@@ -228,11 +228,12 @@ def main(args):
     end_time = time.time()
     training_time = (end_time - start_time) / 60  # in minutes
     # Add this to params
-    with open(os.path.join(args.output_directory, 'params.json'), 'r+') as f:
+    with open(os.path.join(args.output_directory, 'params.json'), 'r') as f:
         params = json.load(f)
-        params.update({'total_time_mins': training_time})
-        params.update({'epoch_time_mins': training_time/args.n_epochs})
-        json.dump(params, f)
+    params.update({'total_time_mins': training_time})
+    params.update({'epoch_time_mins': training_time/args.n_epochs})
+    with open(os.path.join(args.output_directory, 'params.json'), 'r') as f:
+        json.dump(params, f, indent=2)
 
 
 def get_args():
