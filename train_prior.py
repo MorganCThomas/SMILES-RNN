@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 from os import path
@@ -80,6 +81,14 @@ def main(args):
         tokenizer = DeepSMILESTokenizer(compress=True)
     if args.grammar == 'SELFIES':
         tokenizer = SELFIESTokenizer()
+    if args.grammar == 'SmiZip':
+        if not args.smizip_ngrams or not os.path.isfile(args.smizip_ngrams):
+            sys.exit('ERROR: For the SmiZip grammar, you need to use the --smizip-ngrams option to specify the SmiZip JSON file listing the n-grams')
+        with open(args.smizip_ngrams) as inp:
+            ngrams = json.load(inp)['ngrams']
+        if '$' not in ngrams or '^' not in ngrams:
+            sys.exit("ERROR: For the SmiZip grammar, the list of n-grams must include the start and end tokens '^' and '$'. You can add these to an existing SmiZip JSON file using SmiZip's 'add_char_to_ngrams' command")
+        tokenizer = SmiZipTokenizer(ngrams)
 
     # Create vocabulary
     logger.info('Creating vocabulary')
@@ -246,12 +255,14 @@ def get_args():
 
     #optional = parser.add_argument_group('Optional arguments')
     parser.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_cr',
-                                                'deepSMILES_c', 'deepSMILES_cb', 'deepSMILES_b', 'SELFIES'],
+                                                'deepSMILES_c', 'deepSMILES_cb', 'deepSMILES_b', 'SELFIES',
+                                                'SmiZip'],
                           default='SMILES',
                           help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
     parser.add_argument('--randomize', action='store_true',
                           help='Training smiles will be randomized using default arguments (10 restricted)')
 
+    parser.add_argument('--smizip-ngrams', help='SmiZip JSON file containing the list of n-grams')
     parser.add_argument('--valid_smiles', help='Validation smiles')
     parser.add_argument('--test_smiles', help='Test smiles')
     parser.add_argument('--validate_frequency', default=500, help=' ')

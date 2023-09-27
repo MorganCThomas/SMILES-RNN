@@ -7,6 +7,10 @@ import numpy as np
 
 import deepsmiles
 import selfies
+try:
+    import smizip
+except:
+    smizip = None
 
 
 # contains the data structure
@@ -263,6 +267,33 @@ class SELFIESTokenizer:
                 smi = None
         return smi
 
+class SmiZipTokenizer:
+    """Deals with the tokenization and untokenization of SmiZipped SMILES."""
+
+    GRAMMAR = 'SmiZip'
+
+    def __init__(self, ngrams):
+        if smizip is None:
+            raise ImportError("No module named 'smizip'. Try 'python3 -m pip install smizip'.")
+        self.zipper = smizip.SmiZip(ngrams)
+
+    def tokenize(self, data, with_begin_and_end=True):
+        """Tokenizes a SMILES string via conversion to SmiZip tokens"""
+        tokens = self.zipper.zip(data, format=1) # format=1 returns the tokens
+        if with_begin_and_end:
+            tokens = ["^"] + tokens + ["$"]
+        return tokens
+
+    def untokenize(self, tokens, convert_to_smiles=True):
+        """Join the SmiZip tokens to create a SMILES string"""
+        ntokens = []
+        for token in tokens:
+            if token == "$":
+                break
+            if token == "^":
+                continue
+            ntokens.append(token)
+        return "".join(ntokens) if convert_to_smiles else ",".join(ntokens)
 
 def create_vocabulary(smiles_list, tokenizer):
     """Creates a vocabulary for the SMILES syntax."""
