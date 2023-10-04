@@ -249,9 +249,9 @@ def get_args():
     parser = argparse.ArgumentParser(description='Train an initial prior model based on smiles data',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     required = parser.add_argument_group('required arguments')
-    required.add_argument('-i', '--train_smiles', type=str, help='Path to smiles file')
-    required.add_argument('-o', '--output_directory', type=str, help='Output directory to save model')
-    required.add_argument('-s', '--suffix', type=str, help='Suffix to name files')
+    required.add_argument('-i', '--train_smiles', type=str, help='Path to smiles file', required=True)
+    required.add_argument('-o', '--output_directory', type=str, help='Output directory to save model', required=True)
+    required.add_argument('-s', '--suffix', type=str, help='Suffix to name files', required=True)
 
     #optional = parser.add_argument_group('Optional arguments')
     parser.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_cr',
