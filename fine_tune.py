@@ -159,7 +159,7 @@ def get_args():
     required.add_argument('-i', '--tune_smiles', type=str, help='Path to fine-tuning smiles file', required=True)
     required.add_argument('-o', '--output_directory', type=str, help='Output directory to save model', required=True)
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files', required=True)
-    required.add_argument('--model', type=str, choices=['RNN', 'Transformer', 'GTr'], help='Choice of architecture')
+    required.add_argument('--model', type=str, choices=['RNN', 'Transformer', 'GTr'], help='Choice of architecture', required=True)
 
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('--randomize', action='store_true',
