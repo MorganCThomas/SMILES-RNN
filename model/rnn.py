@@ -61,6 +61,7 @@ class RNN(nn.Module):
             else:
                 hidden_state = [torch.zeros(*size), torch.zeros(*size)]
         embedded_data = self._embedding(input_vector)  # (batch, seq, embedding)
+        hidden_state = hidden_state.to(embedded_data.device)
         output_vector, hidden_state_out = self._rnn(embedded_data, hidden_state)
 
         if self._layer_normalization:
@@ -164,7 +165,7 @@ class Model:
         self.network = RNN(len(self.vocabulary), **network_params)
         self.network.to(self.device)
 
-        self._nll_loss = nn.NLLLoss(reduction="none")
+        self._nll_loss = nn.NLLLoss(reduction="none").to(device)
 
     @classmethod
     def load_from_file(cls, file_path: str, sampling_mode=False, device=torch.device('cuda')):
@@ -240,6 +241,7 @@ class Model:
         :param sequences: (batch_size, sequence_length) A batch of sequences
         :return:  (batch_size) Log likelihood for each example.
         """
+        sequences = sequences.to(self.device)
         logits, _, _ = self.network(sequences[:, :-1])  # all steps done at once
         log_probs = logits.log_softmax(dim=2)
         return self._nll_loss(log_probs.transpose(1, 2), sequences[:, 1:]).sum(dim=1)
@@ -401,7 +403,7 @@ class Model:
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         # To ensure all sizes match up, we'll pad with zero and remove non-zero columns after
         sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
-        nlls = torch.zeros(num)
+        nlls = torch.zeros(num).to(self.device)
         action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
         action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
         values = torch.zeros((num, self.max_sequence_length), requires_grad=True) \
@@ -415,6 +417,7 @@ class Model:
             start_token = torch.zeros(size, dtype=torch.long)
             start_token[:] = self.vocabulary["^"]
             input_vector = start_token
+            input_vector = input_vector.to(self.device)
             sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
             hidden_state = None
             for t in range(1, self.max_sequence_length):
