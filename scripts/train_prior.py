@@ -241,7 +241,7 @@ def main(args):
         params = json.load(f)
     params.update({'total_time_mins': training_time})
     params.update({'epoch_time_mins': training_time/args.n_epochs})
-    with open(os.path.join(args.output_directory, 'params.json'), 'r') as f:
+    with open(os.path.join(args.output_directory, 'params.json'), 'w') as f:
         json.dump(params, f, indent=2)
 
 
