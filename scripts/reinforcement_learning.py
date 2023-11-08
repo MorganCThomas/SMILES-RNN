@@ -2,14 +2,11 @@ import os
 import argparse
 import logging
 import json
-import copy
-from tqdm.auto import tqdm
 from rdkit import rdBase
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import torch
-from model.model import Model
 from model import RL_strategies, utils
 
 from molscore.manager import MolScore
@@ -26,7 +23,7 @@ def main(args):
     # Setup scoring function
     ms = MolScore(model_name='SMILES-RNN', task_config=args.molscore_config)
     ms.log_parameters({k: vars(args)[k] for k in
-                       ['prior', 'agent', 'batch_size', 'rl_strategy', 'sigma', 'kl_coefficient', 'entropy_coefficient']
+                       ['model', 'prior', 'agent', 'batch_size', 'rl_strategy', 'sigma', 'kl_coefficient', 'entropy_coefficient']
                        if k in vars(args).keys()})
 
     # Save these parameters for good measure
@@ -55,11 +52,12 @@ def main(args):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Optimize an RNN towards a reward via reinforment learning',
+    parser = argparse.ArgumentParser(description='Optimize a model towards a reward via reinforment learning',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     required = parser.add_argument_group('Required arguments')
     required.add_argument('-p', '--prior', type=str, help='Path to prior checkpoint (.ckpt)', required=True)
     required.add_argument('-m', '--molscore_config', type=str, help='Path to molscore config (.json)', required=True)
+    required.add_argument('--model', type=str, choices=['RNN', 'Transformer', 'GTr'], help='Choice of architecture', required=True)
 
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('-a', '--agent', type=str, help='Path to agent checkpoint (.ckpt)')

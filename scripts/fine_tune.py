@@ -9,7 +9,9 @@ from itertools import chain
 from torch.utils.tensorboard import SummaryWriter
 
 from model.vocabulary import *
-from model.model import *
+from model.rnn import Model
+from model.transformer import Model as TransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model.dataset import *
 from model import utils
 from model.utils import randomize_smiles
@@ -52,7 +54,15 @@ def main(args):
         test_smiles = utils.read_smiles(args.test_smiles)
 
     # Load model
-    prior = Model.load_from_file(file_path=args.prior, sampling_mode=False, device=device)
+    if args.model == 'RNN':
+        prior = Model.load_from_file(file_path=args.prior, sampling_mode=False, device=device)
+    elif args.model == 'Transformer':
+        prior = TransformerModel(file_path=args.prior, sampling_mode=False, device=device)
+    elif args.model == 'GTr':
+        prior = StableTransformerModel(file_path=args.prior, sampling_mode=False, device=device)
+    else:
+        print("Model must be either [RNN, Transformer, GTr]")
+        raise KeyError
 
     # Freeze layers (embedding + 4 parameters per RNN layer)
     if args.freeze is not None:
@@ -149,6 +159,7 @@ def get_args():
     required.add_argument('-i', '--tune_smiles', type=str, help='Path to fine-tuning smiles file', required=True)
     required.add_argument('-o', '--output_directory', type=str, help='Output directory to save model', required=True)
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files', required=True)
+    required.add_argument('--model', type=str, choices=['RNN', 'Transformer', 'GTr'], help='Choice of architecture', required=True)
 
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('--randomize', action='store_true',

@@ -7,7 +7,9 @@ import logging
 from rdkit import rdBase
 from rdkit.Chem import AllChem as Chem
 
-from model.model import *
+from model.rnn import *
+from model.transformer import Model as TransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model import utils
 
 rdBase.DisableLog("rdApp.error")
@@ -30,10 +32,21 @@ def main(args):
     logger.info(f'Device set to {device.type}')
 
     # Load model
-    model = Model.load_from_file(file_path=args.model, sampling_mode=True, device=device)
-
-    # Sample TODO different sample modes e.g. beam search, temperature
-    smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature, partial=args.psmiles)
+    if args.model == 'RNN':
+        model = Model.load_from_file(file_path=args.path, sampling_mode=True, device=device)
+    elif args.model == 'Transformer':
+        model = TransformerModel.load_from_file(file_path=args.path, sampling_mode=True, device=device)
+    elif args.model == 'GTr':
+        model = StableTransformerModel.load_from_file(file_path=args.path, sampling_mode=True, device=device)
+    else:
+        print("Model must be either [RNN, Transformer, GTr]")
+        raise KeyError
+    
+    # Sample TODO different sample modes e.g. beam search
+    if args.native:
+        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature)
+    else:
+        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:
@@ -43,8 +56,12 @@ def main(args):
 
         logger.info(f'Topping up {len(set(canonical_smiles))} smiles')
         while (len(set(canonical_smiles)) < args.number):
-            new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
-                                                temperature=args.temperature, partial=args.psmiles)
+            if args.native:
+                new_smiles, _ = model.sample_native(num=(args.number - len(set(canonical_smiles))),
+                                                    temperature=args.temperature, partial=args.psmiles)
+            else:
+                new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
+                                                    temperature=args.temperature, partial=args.psmiles)
             new_canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in new_smiles
                                     if Chem.MolFromSmiles(smi)]
             canonical_smiles += new_canonical_smiles
@@ -60,7 +77,8 @@ def main(args):
 def get_args():
     parser = argparse.ArgumentParser(description='Sample smiles from model',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-m', '--model', type=str, help='Path to checkpoint (.ckpt)', required=True)
+    parser.add_argument('-p', '--path', type=str, help='Path to checkpoint (.ckpt)', required=True)
+    parser.add_argument('-m', '--model', type=str, help='Choice of architecture', choices=['RNN', 'Transformer', 'GTr'], required=True)
     parser.add_argument('-o', '--output', type=str, help='Path to save file (e.g. Data/Prior_10k.smi)', required=True)
     parser.add_argument('-d', '--device', default='gpu', help=' ')
     parser.add_argument('-n', '--number', type=int, default=10000, help=' ')
@@ -68,6 +86,7 @@ def get_args():
                         help='Temperature to sample (1: multinomial, <1: Less random, >1: More random)')
     parser.add_argument('--psmiles', type=str, default=None, help='Partial smiles used to begin sampling')
     parser.add_argument('--unique', action='store_true', help='Keep sampling until n unique canonical molecules have been sampled')
+    parser.add_argument('--native', action='store_true', help='If trained using an alternative grammar e.g., SELFIES. don\'t convet back to SMILES')
     args = parser.parse_args()
     return args
 
