@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from model.vocabulary import *
 from model.rnn import *
 from model.transformer import Model as TransformerModel
-from model.GTr import Model as StableTransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model.dataset import *
 from model import utils
 from model.utils import randomize_smiles

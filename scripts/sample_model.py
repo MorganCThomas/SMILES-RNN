@@ -9,7 +9,7 @@ from rdkit.Chem import AllChem as Chem
 
 from model.rnn import *
 from model.transformer import Model as TransformerModel
-from model.GTr import Model as StableTransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model import utils
 
 rdBase.DisableLog("rdApp.error")
