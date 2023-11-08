@@ -282,23 +282,35 @@ def reverse_smiles(smiles, renumber_rings=False, v=False):
 
     # Reverse the tokens
     rsplitted = list(reversed(splitted))
+    rsmiles = "".join(rsplitted)
     if v: print(f'Reversed tokens:\n\t {rsplitted}')
-    if v: print(f'Reversed smiles: {"".join(rsplitted)}')
+    if v: print(f'Reversed smiles:\n\t {rsmiles}')
 
     # Re-number the rings in order of appearance
     if renumber_rings:
-        raise NotImplementedError
-        # Split further by rings ... 
-        # Change order of ring numbering
+        # WARNING: Limited to < 10 rings as treats each number as an individual ring
+        ring_map = {}
         ring_count = 1
-        ring_map = {} # Index to new ring number
-        for i, t in enumerate(rsplitted):
-            if re.search(".[0-9]{1}$|.[0-9]{2}$", t):
-                if t in ring_map.keys():
-                    continue
-                else:
-                    ring_map[t] = str(ring_count)
-                    ring_count += 1
-        rtdsmiles = [ring_map[t] if t in ring_map.keys() else t for t in rsplitted]
-
-    return ''.join(rsplitted)
+        square_brackets = False
+        new_rsmiles = ""
+        for ci, c in enumerate(rsmiles):
+            # First evaluate if we are in square brackets
+            if c == '[':
+                square_brackets = True
+            if c == ']':
+                square_brackets = False
+            if not square_brackets:
+                # Check for number
+                if re.search("[0-9]", c):
+                    # Add to ring map
+                    if c not in ring_map.keys(): #not any([rn == mi for mi, mo in ring_map]):
+                        ring_map[c] = str(ring_count) #.append((rn, str(ring_count)))
+                        ring_count += 1
+                    # Update c
+                    c = ring_map[c]
+            # Add token
+            new_rsmiles += c
+        rsmiles = new_rsmiles
+        if v: print(f'Rings reindexed:\n\t {rsmiles}')
+            
+    return rsmiles
