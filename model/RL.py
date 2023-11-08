@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 import torch
 from model.rnn import Model as RNNModel
 from model.transformer import Model as TransformerModel
-from model.GTr import Model as StableTransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model import utils
 
 
