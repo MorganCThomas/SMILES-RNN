@@ -135,10 +135,8 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", rootAtom=None, re
         smi = re.sub('\(\*\)', '*', smi, count=1)
 
     mol = Chem.MolFromSmiles(smi)
+    if not mol: return None
     assert Descriptors.RingCount(mol) < 10, "More than ten rings, uncertain about SMILES reversal behaviour"
-
-    if not mol:
-        return None
 
     if random_type == "unrestricted":
         rand_smiles = []
@@ -314,3 +312,64 @@ def reverse_smiles(smiles, renumber_rings=False, v=False):
         if v: print(f'Rings reindexed:\n\t {rsmiles}')
             
     return rsmiles
+
+# Functions
+def get_attachment_indexes(smi: str) -> list: # Utils
+    """
+    Identify atom idxs of attachment points (i.e., neighbours of *)
+    :param smi: SMILES with (*) to denote where new atoms should be attached
+    :return: Atom index of attachment points
+    """
+    tokenizer = SMILESTokenizer()
+    tokens = tokenizer.tokenize(smi, with_begin_and_end=False)
+    atom_regexp = [
+        tokenizer.REGEXPS["brackets"],
+        tokenizer.REGEXPS["brcl"],
+        tokenizer.REGEXPS["atom"]
+        ]
+    atom_counter = 0
+    attachment_points = []
+    for t in tokens:
+        if t == '*':
+            attachment_points.append(atom_counter-1)
+            atom_counter += 1
+        if any([regex.match(t) for regex in atom_regexp]):
+            atom_counter += 1
+    return attachment_points
+
+def insert_attachment_points(smi: str, at_pts: list): # Utils
+    """
+    Insert * to denote where new atoms are to be attached, atom order may change as so new atom index is returned
+    :param smi: SMILES without (*)
+    :param at_pts: Atom index of attachment points
+    :return: SMILES with (*), Atom index of attachment points
+    """
+    tokenizer = SMILESTokenizer()
+    tokens = tokenizer.tokenize(smi, with_begin_and_end=False)
+    atom_regexp = [
+        tokenizer.REGEXPS["brackets"],
+        tokenizer.REGEXPS["brcl"],
+        tokenizer.REGEXPS["atom"]
+        ]
+    atom_counter = 0
+    new_tokens = []
+    for t in tokens:
+        new_tokens.append(t)
+        if any([regex.match(t) for regex in atom_regexp]):
+            if atom_counter in at_pts:
+                new_tokens.append("(*)")
+            atom_counter += 1
+    smi = ''.join(new_tokens)
+    # Inserting these will change atom numbering so recaculate at_pts
+    at_pts = get_attachment_indexes(smi)
+    return smi, at_pts
+
+def strip_attachment_points(smi: str):  # Utils
+    """
+    Remove * and provide canonical SMILES
+    :param smi: SMILES with (*)
+    :return: SMILES without (*), Atom index of attachment points
+    """
+    at_pts = get_attachment_indexes(smi)
+    smi = smi.replace("(*)", "").replace("*", "")
+    return smi, at_pts

@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as tf
 
 import model.vocabulary as voc
-from model.utils import randomize_smiles
+from model import utils
 
 
 class RNN(nn.Module):
@@ -335,10 +335,7 @@ class Model:
             :likelihoods: (n) A list of likelihoods.
         """
         if partial is not None:
-            tokens = self.tokenizer.tokenize(partial)
-            encoded = self.vocabulary.encode(tokens)
-            pseq = torch.tensor(encoded, dtype=torch.long)
-            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature, partial_smiles=pseq)
+            seqs, likelihoods, _, _, _ = self._batch_sample_partial(num=num, temperature=temperature, partial_smiles=partial)
         else:
             seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
@@ -356,13 +353,9 @@ class Model:
             :likelihoods: (n) A list of likelihoods.
         """
         if partial is not None:
-            partial, _ = self._preferred_smiles(partial)
-            tokens = self.tokenizer.tokenize(partial)
-            encoded = self.vocabulary.encode(tokens)
-            pseq = torch.tensor(encoded, dtype=torch.long)
-            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature, partial_smiles=pseq)
+            seqs, likelihoods, _, _, _ = self._batch_sample_partial(num=num, batch_size=batch_size, temperature=temperature, partial_smiles=partial)
         else:
-            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
+            seqs, likelihoods, _, _, _ = self._batch_sample(num=num, batch_size=batch_size, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
@@ -370,18 +363,32 @@ class Model:
     def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0, partial=None) -> \
             Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         if partial is not None:
-            partial, _ = self._preferred_smiles(partial)
-            tokens = self.tokenizer.tokenize(partial)
-            encoded = self.vocabulary.encode(tokens)
-            pseq = torch.tensor(encoded, dtype=torch.long)
-            seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature, partial_smiles=pseq)
+            seqs, likelihoods, probs, log_probs, values = self._batch_sample_partial(num=batch_size, temperature=temperature, partial_smiles=partial)
         else:
             seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         return seqs, smiles, likelihoods, probs, log_probs, values
 
+    def _optimize_partial_smiles(self, smi: str, at_idx: int):  # Model
+        """
+        Optimize partial SMILES for a particular attachment index with respect to the current model
+        :param smi: SMILES with (*)
+        :param at_idx: Selected attachment index
+        :return: Optimal SMILES, respective NLL
+        """
+        # Possibly optimal smiles
+        rand_smi = utils.randomize_smiles(smi, n_rand=10, random_type='restricted', rootAtom=at_idx, reverse=True)
+        if rand_smi is None:
+            return smi, None
+        with torch.no_grad():
+            nlls = self.likelihood_smiles([utils.strip_attachment_points(smi)[0] for smi in rand_smi]).cpu().numpy()
+        opt_idx = np.argmin(nlls)
+        opt_smi = rand_smi[opt_idx]
+        opt_nll = nlls[opt_idx]
+        return opt_smi, opt_nll
+    
     def _preferred_smiles(self, smiles):
-        alt_smiles = list(set([smiles] + randomize_smiles(smiles, keep_last=True) + randomize_smiles(smiles, random_type='unrestricted', keep_last=True)))
+        alt_smiles = list(set([smiles] + utils.randomize_smiles(smiles, keep_last=True) + utils.randomize_smiles(smiles, random_type='unrestricted', keep_last=True)))
         with torch.no_grad():
             nlls = self.likelihood_smiles(alt_smiles).cpu().numpy()
         preferred_smiles, nll = list(sorted(zip(alt_smiles, nlls), key=lambda x: x[1]))[0]
@@ -390,7 +397,7 @@ class Model:
     def RNN2Critic(self):
         self.network = RNNCritic(self.network)
 
-    def _sample(self, batch_size=64, temperature=1.0, partial_smiles=None) -> \
+    def _sample(self, batch_size=64, temperature=1.0, pseq=None) -> \
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         
         sequences = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.long)
@@ -404,11 +411,19 @@ class Model:
         nlls = torch.zeros(batch_size)
 
         for t in range(1, self.max_sequence_length-1):
+            # Get probabilities
             logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
             logits = logits.squeeze(1) / temperature
             probabilities = logits.softmax(dim=1)
             log_probs = logits.log_softmax(dim=1)
             input_vector = torch.multinomial(probabilities, 1).view(-1)
+
+            # Enforce sampling
+            if pseq is not None:
+                enforce = (pseq[:, t] != 0)
+                input_vector = (~enforce * input_vector) + (enforce * pseq[:, t])
+
+            # Store outputs
             sequences[:, t] = input_vector
             action_probs.data[:, t] = torch.tensor([p[a] for p, a in zip(probabilities, input_vector)])
             action_log_probs.data[:, t] = torch.tensor([p[a] for p, a in zip(log_probs, input_vector)])
@@ -420,7 +435,7 @@ class Model:
 
         return sequences.data, nlls, action_probs, action_log_probs, values
 
-    def _batch_sample(self, num=128, batch_size=64, temperature=1.0, partial_smiles=None) -> \
+    def _batch_sample(self, num=128, batch_size=64, temperature=1.0) -> \
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
         """Wrapper to sample many batches up to a certain number"""
 
@@ -439,7 +454,7 @@ class Model:
 
         for size in batch_sizes:
             # Sample a single batch
-            batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, batch_values = self._sample(batch_size=size, temperature=temperature, partial_smiles=partial_smiles)
+            batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, batch_values = self._sample(batch_size=size, temperature=temperature)
 
             # Update
             sequences[batch_idx:batch_idx+size, :] = batch_seqs
@@ -463,68 +478,84 @@ class Model:
 
         return sequences.data, nlls, action_probs, action_log_probs, values
 
-    def _batch_sample_old(self, num=128, batch_size=64, temperature=1.0, partial_sequence=None) -> \
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
-        raise DeprecationWarning
-        # To ensure all sizes match up, we'll pad with zero and remove non-zero columns after
+    @torch.no_grad()
+    def _batch_sample_partial(self, num=128, batch_size=64, temperature=1.0, partial_smiles=None):
+        # ----- Prep-process partial smiles
+        at_pts = utils.get_attachment_indexes(partial_smiles)
+        n_pts = len(at_pts)
+        init_psmiles = []
+        for aidx in at_pts:
+            opt_psmi, _ = self._optimize_partial_smiles(partial_smiles, aidx)
+            opt_psmi_stripped, rem_pts = utils.strip_attachment_points(opt_psmi)
+            rem_pts.pop(-1)
+            tokens = self.tokenizer.tokenize(opt_psmi_stripped, with_begin_and_end=True)
+            pseq = torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long)
+            init_psmiles.append((pseq, rem_pts))
+        
+        # ----- Create placeholders
         sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
-        if partial_sequence is not None:
-            partial_sequence = partial_sequence[:-1] # Remove end token
-
         nlls = torch.zeros(num)
-        action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
-        action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
-        values = torch.zeros((num, self.max_sequence_length), requires_grad=True) \
-            if self.network._get_name() == 'RNNCritic' else None
-
+        action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
+        action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
+        hidden_state = None
+        
         # Sample in batches
         batch_sizes = [batch_size for _ in range(num // batch_size)]
         batch_sizes += [num % batch_size] if num % batch_size != 0 else []
         batch_idx = 0
-
+        
+        # ---- Sample
         for size in batch_sizes:
-            start_token = torch.zeros(size, dtype=torch.long)
-            start_token[:] = self.vocabulary["^"]
-            input_vector = start_token
-            sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
-            hidden_state = None
+            # Randomize selection in batch
+            batch_pseq = []
+            batch_at_pts = []
+            for _ in range(size):
+                i = np.random.choice(list(range(n_pts)), 1)[0]
+                batch_pseq.append(init_psmiles[i][0])
+                batch_at_pts.append(init_psmiles[i][1])
+            batch_pseq = torch.vstack([tf.pad(seq, (0, self.max_sequence_length - len(seq))) for seq in batch_pseq])
+            batch_at_pts = np.asarray(batch_at_pts)
             
-            # Now iteratively sample as normal
-            for t in range(1, self.max_sequence_length):
-                logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
-                logits = logits.squeeze(1) / temperature
-                probabilities = logits.softmax(dim=1)
-                log_probs = logits.log_softmax(dim=1)
-                if (partial_sequence is not None) and (t < len(partial_sequence)):
-                    input_vector = partial_sequence[t].repeat(size, 1).view(-1)  # Enforce partial sampling
-                else:
-                    input_vector = torch.multinomial(probabilities, 1).view(-1)
-
-                sequences[batch_idx:batch_idx+size, t] = input_vector
-                action_probs.data[batch_idx:batch_idx+size, t] = torch.tensor([p[a] for p, a in
-                                                                               zip(probabilities, input_vector)])
-                action_log_probs.data[batch_idx:batch_idx+size, t] = torch.tensor([p[a] for p, a in
-                                                                                   zip(log_probs, input_vector)])
-                if self.network._get_name() == 'RNNCritic':
-                    values.data[batch_idx:batch_idx+size, t] = value.squeeze(1)
-
-                nlls[batch_idx:batch_idx+size] += self._nll_loss(log_probs, input_vector)
-
-                if input_vector.sum() == 0:  # If all sequences terminate, finish.
-                    break
-
+            # Sample a single batch
+            batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq)
+            
+            while batch_at_pts.shape[1]:
+                # Convert sequences back to SMILES
+                batch_smis = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in batch_seqs.cpu().numpy()]
+                # Insert attachment point
+                batch_psmis = [utils.insert_attachment_points(smi, a)[0] for smi, a in zip(batch_smis, batch_at_pts)]
+                # Select another attachment point
+                sel_pts = [np.random.choice(a, 1, replace=False)[0] for a in batch_at_pts]
+                # Optimize psmiles
+                opt_psmis = [self._optimize_partial_smiles(psmi, s)[0] for psmi, s in zip(batch_psmis, sel_pts)]
+                # Strip (batch_at_pts index may have changed) -> (psmi, at_pts)
+                opt_psmis_stripped = [utils.strip_attachment_points(opt_psmi) for opt_psmi in opt_psmis]
+                batch_at_pts = np.asarray([x[1] for x in opt_psmis_stripped])
+                opt_psmis_stripped = [x[0] for x in opt_psmis_stripped]
+                batch_at_pts = np.delete(batch_at_pts, -1, 1) # Remove last attachment point used
+                # Encode
+                batch_pseq_tokens = [self.tokenizer.tokenize(opt_psmi_stripped, with_begin_and_end=True) for opt_psmi_stripped in opt_psmis_stripped]
+                batch_pseq = torch.vstack([tf.pad(torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long), (0, self.max_sequence_length - len(tokens))) for tokens in batch_pseq_tokens])
+                # Re-sample
+                batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq)
+            
+            # Update
+            sequences[batch_idx:batch_idx+size, :] = batch_seqs
+            nlls[batch_idx:batch_idx+size] += batch_nlls
+            action_probs.data[batch_idx:batch_idx+size, :] = batch_action_probs
+            action_log_probs.data[batch_idx:batch_idx+size, :] = batch_action_log_probs
+        
+            # Update batch index
             batch_idx += size
-
+        
         # Trim any completely non zero cols
         non_zero_cols = [col_idx for col_idx, col in enumerate(torch.split(sequences, 1, dim=1))
-                         if not torch.all(col == 0)]
+                            if not torch.all(col == 0)]
         sequences = sequences[:, non_zero_cols]
         action_probs = action_probs[:, non_zero_cols]
         action_log_probs = action_log_probs[:, non_zero_cols]
-        if self.network._get_name() == 'RNNCritic':
-            values = values[:, non_zero_cols]
-
-        return sequences.data, nlls, action_probs, action_log_probs, values
+        
+        return sequences.data, nlls, action_probs, action_log_probs, None
 
     def _beam_search(self, k) -> Tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
