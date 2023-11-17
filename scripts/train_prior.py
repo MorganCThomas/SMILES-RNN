@@ -5,6 +5,7 @@ import json
 from os import path
 import argparse
 import logging
+import multiprocessing
 from tqdm.auto import tqdm
 from rdkit import rdBase
 from itertools import chain
@@ -52,7 +53,12 @@ def main(args):
     # Augment by randomization
     if args.randomize:
         logger.info(f'Randomizing {len(train_smiles)} training smiles')
-        train_smiles = [randomize_smiles(smi) for smi in tqdm(train_smiles) if randomize_smiles(smi) is not None]
+        if args.n_jobs > 1:
+            with multiprocessing.get_context('fork').Pool(args.n_jobs) as pool:
+                train_smiles = [rsmis for rsmis in tqdm(pool.imap(randomize_smiles, train_smiles), total=len(train_smiles)) if rsmis is not None]
+        else:
+            train_smiles = [randomize_smiles(smi) for smi in tqdm(train_smiles)]
+            train_smiles = [smi for smi in train_smiles if smi is not None]
         train_smiles = list(chain.from_iterable(train_smiles))
         logger.info(f'Returned {len(train_smiles)} randomized training smiles')
     # Load other smiles
@@ -262,6 +268,7 @@ def get_args():
                           help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
     parser.add_argument('--randomize', action='store_true',
                           help='Training smiles will be randomized using default arguments (10 restricted)')
+    parser.add_argument('--n_jobs', type=int, default=1, help="If randomizing use multiple cores")
 
     parser.add_argument('--smizip-ngrams', help='SmiZip JSON file containing the list of n-grams')
     parser.add_argument('--valid_smiles', help='Validation smiles')
