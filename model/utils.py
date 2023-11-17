@@ -5,6 +5,7 @@ import gzip
 import torch
 import logging
 import random
+import warnings
 import numpy as np
 from model.vocabulary import SMILESTokenizer, DeepSMILESTokenizer
 import torch.utils.tensorboard.summary as tbxs
@@ -136,7 +137,9 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", rootAtom=None, re
 
     mol = Chem.MolFromSmiles(smi)
     if not mol: return None
-    assert Descriptors.RingCount(mol) < 10, "More than ten rings, uncertain about SMILES reversal behaviour"
+    if Descriptors.RingCount(mol) >= 10:
+        warnings.warn("More than ten rings, uncertain about SMILES reversal behaviour so skipping")
+        return None
 
     if random_type == "unrestricted":
         rand_smiles = []
