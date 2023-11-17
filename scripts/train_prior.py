@@ -98,7 +98,8 @@ def main(args):
     dataset = Dataset(smiles_list=train_smiles, vocabulary=smiles_vocab,
                       tokenizer=tokenizer)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
-                                             shuffle=True, collate_fn=Dataset.collate_fn)
+                                             shuffle=True, collate_fn=Dataset.collate_fn,
+                                             generator=torch.Generator(device=device))
 
     if args.model == 'RNN':
         # Set network params
