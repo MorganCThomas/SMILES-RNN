@@ -411,7 +411,6 @@ class Model:
             if self.network._get_name() == 'RNNCritic' else None
         hidden_state = None
         nlls = torch.zeros(batch_size).to(self.device)
-        pseq = pseq.to(self.device)
         for t in range(self.max_sequence_length - 1):
             logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
             logits = logits.squeeze(1) / temperature
@@ -518,7 +517,7 @@ class Model:
             batch_at_pts = np.asarray(batch_at_pts)
             
             # Sample a single batch
-            batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq)
+            batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq.to(self.device))
             
             while batch_at_pts.shape[1]:
                 # Convert sequences back to SMILES
@@ -538,7 +537,7 @@ class Model:
                 batch_pseq_tokens = [self.tokenizer.tokenize(opt_psmi_stripped, with_begin_and_end=True) for opt_psmi_stripped in opt_psmis_stripped]
                 batch_pseq = torch.vstack([tf.pad(torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long), (0, self.max_sequence_length - len(tokens))) for tokens in batch_pseq_tokens])
                 # Re-sample
-                batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq)
+                batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq.to(self.device))
             
             # Update
             sequences[batch_idx:batch_idx+size, :] = batch_seqs
