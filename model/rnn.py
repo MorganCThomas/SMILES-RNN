@@ -56,13 +56,13 @@ class RNN(nn.Module):
         :param hidden_state: Hidden state tensor.
         """
         batch_size, seq_size = input_vector.size()
+        embedded_data = self._embedding(input_vector)  # (batch, seq, embedding)
         if hidden_state is None:
             size = (self._num_layers, batch_size, self._layer_size)
             if self._cell_type == "gru":
-                hidden_state = torch.zeros(*size)
+                hidden_state = torch.zeros(*size).to(embedded_data.device)
             else:
-                hidden_state = [torch.zeros(*size), torch.zeros(*size)]
-        embedded_data = self._embedding(input_vector)  # (batch, seq, embedding)
+                hidden_state = [torch.zeros(*size).to(embedded_data.device), torch.zeros(*size).to(embedded_data.device)]
         output_vector, hidden_state_out = self._rnn(embedded_data, hidden_state)
 
         if self._layer_normalization:
@@ -166,7 +166,7 @@ class Model:
         self.network = RNN(len(self.vocabulary), **network_params)
         self.network.to(self.device)
 
-        self._nll_loss = nn.NLLLoss(reduction="none")
+        self._nll_loss = nn.NLLLoss(reduction="none").to(device)
 
     @classmethod
     def load_from_file(cls, file_path: str, sampling_mode=False, device=torch.device('cuda')):
@@ -242,6 +242,7 @@ class Model:
         :param sequences: (batch_size, sequence_length) A batch of sequences
         :return:  (batch_size) Log likelihood for each example.
         """
+        sequences = sequences.to(self.device)
         logits, _, _ = self.network(sequences[:, :-1])  # all steps done at once
         log_probs = logits.log_softmax(dim=2)
         return self._nll_loss(log_probs.transpose(1, 2), sequences[:, 1:]).sum(dim=1)
@@ -402,16 +403,16 @@ class Model:
         
         sequences = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.long)
         sequences[:, 0] = self.vocabulary["^"] 
-        input_vector = sequences[:, 0] 
+        input_vector = sequences[:, 0]
+        input_vector = input_vector.to(self.device)
         action_probs = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.float, requires_grad=True) 
         action_log_probs = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.float, requires_grad=True) 
         values = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.float, requires_grad=True) \
             if self.network._get_name() == 'RNNCritic' else None
         hidden_state = None
-        nlls = torch.zeros(batch_size)
-
-        for t in range(1, self.max_sequence_length-1):
-            # Get probabilities
+        nlls = torch.zeros(batch_size).to(self.device)
+        pseq = pseq.to(self.device)
+        for t in range(self.max_sequence_length - 1):
             logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
             logits = logits.squeeze(1) / temperature
             probabilities = logits.softmax(dim=1)
@@ -441,7 +442,7 @@ class Model:
 
         # To ensure all sizes match up, we'll pad with zero and remove non-zero columns after
         sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
-        nlls = torch.zeros(num)
+        nlls = torch.zeros(num, device=self.device)
         action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
         action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=True)
         values = torch.zeros((num, self.max_sequence_length), requires_grad=True) \
@@ -494,7 +495,7 @@ class Model:
         
         # ----- Create placeholders
         sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
-        nlls = torch.zeros(num)
+        nlls = torch.zeros(num, device=self.device)
         action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
         action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
         hidden_state = None

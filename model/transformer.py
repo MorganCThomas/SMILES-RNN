@@ -113,7 +113,7 @@ class Model:
         self.network = TransformerEncoder(len(self.vocabulary), **network_params)
         self.network.to(self.device)
 
-        self._nll_loss = nn.NLLLoss(reduction="none")
+        self._nll_loss = nn.NLLLoss(reduction="none").to(self.device)
 
     @classmethod
     def load_from_file(cls, file_path: str, sampling_mode=False, device=torch.device('cuda')):
@@ -183,6 +183,7 @@ class Model:
         :param sequences: (batch_size, sequence_length) A batch of sequences
         :return:  (batch_size) Log likelihood for each example.
         """
+        sequences = sequences.to(self.device)
         logits = self.network(sequences[:, :-1])  # all steps done at once # Skip last character
         log_probs = logits.log_softmax(dim=2)
         return self._nll_loss(log_probs.transpose(1, 2), sequences[:, 1:]).sum(dim=1)
@@ -247,6 +248,7 @@ class Model:
                 # TODO has to be done one by one, otherwise only inserting one bloody token!
                 input_vectors = torch.zeros((size, self.max_sequence_length), dtype=torch.long)
                 input_vectors[:, 0] = self.vocabulary["^"]
+                input_vector = input_vector.to(self.device)
                 sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
                 for t in range(1, self.max_sequence_length - 1):
                     logits = self.network(input_vectors[:, :t], no_mask=False)[:, -1, :] # Final prediction only

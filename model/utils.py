@@ -24,17 +24,13 @@ def to_tensor(tensor):
     return torch.autograd.Variable(tensor)
 
 
-def set_default_device_cuda(device='gpu'):
+def get_device(device='gpu'):
     """Sets the default device (cpu or cuda) used for all tensors."""
     if not torch.cuda.is_available() or (device == 'cpu'):
         device = torch.device('cpu')
-        tensor = torch.FloatTensor
-        torch.set_default_tensor_type(tensor)
         return device
     elif (device in ['gpu', 'cuda']) and torch.cuda.is_available():  # device_name == "cuda":
         device = torch.device('cuda')
-        tensor = torch.cuda.FloatTensor  # pylint: disable=E1101
-        torch.set_default_tensor_type(tensor)
         return device
     elif torch.cuda.is_available(): # Assume an index
         raise NotImplementedError
