@@ -380,9 +380,9 @@ class HillClimbRegularized(ReinforcementLearning):
 
 class AugmentedHillClimb(ReinforcementLearning):
     _short_name = 'AHC'
-    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, freeze=None,
+    def __init__(self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore=True, psmiles=None, freeze=None,
                  prior=None, batch_size=64, sigma=60, topk=0.5, **kwargs):
-        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, freeze=None)
+        super().__init__(device, model, agent, scoring_function, save_dir, optimizer, learning_rate, is_molscore, psmiles, freeze=None)
 
         # Load prior
         if prior is None:
@@ -404,7 +404,11 @@ class AugmentedHillClimb(ReinforcementLearning):
         # Score
         scores = self._score(smiles, step)
         # Compute loss
-        agent_likelihood = - agent_likelihood
+        if self.psmiles: 
+            # Recompute gradients, sampling psmiles is without gradients
+            agent_likelihood = - self.agent.likelihood(seqs)
+        else:
+            agent_likelihood = - agent_likelihood
         prior_likelihood = - self.prior.likelihood(seqs)
         augmented_likelihood = prior_likelihood + self.sigma * scores
         sscore, sscore_idxs = scores.sort(descending=True)
