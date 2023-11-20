@@ -319,6 +319,7 @@ def get_attachment_indexes(smi: str) -> list: # Utils
     :param smi: SMILES with (*) to denote where new atoms should be attached
     :return: Atom index of attachment points
     """
+    assert not (smi.startswith("*") or smi.startswith("(*)")), "Partial SMILES should not start with attachment point, please insert as branches after atleast one atom e.g., C(*)"
     tokenizer = SMILESTokenizer()
     tokens = tokenizer.tokenize(smi, with_begin_and_end=False)
     atom_regexp = [
