@@ -20,7 +20,7 @@ def to_tensor(tensor):
     return torch.autograd.Variable(tensor)
 
 
-def set_default_device_cuda(device='gpu'):
+def get_device(device='gpu'):
     """Sets the default device (cpu or cuda) used for all tensors."""
     if not torch.cuda.is_available() or (device == 'cpu'):
         device = torch.device('cpu')

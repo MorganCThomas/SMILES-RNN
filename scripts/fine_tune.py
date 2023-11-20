@@ -33,7 +33,7 @@ def main(args):
         os.makedirs(args.output_directory)
 
     # Set device
-    device = utils.set_default_device_cuda(args.device)
+    device = utils.get_device(args.device)
     logger.info(f'Device set to {device.type}')
 
     # Setup Tensorboard

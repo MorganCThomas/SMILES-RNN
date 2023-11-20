@@ -54,14 +54,13 @@ class RNN(nn.Module):
         :param hidden_state: Hidden state tensor.
         """
         batch_size, seq_size = input_vector.size()
+        embedded_data = self._embedding(input_vector)  # (batch, seq, embedding)
         if hidden_state is None:
             size = (self._num_layers, batch_size, self._layer_size)
             if self._cell_type == "gru":
-                hidden_state = torch.zeros(*size)
+                hidden_state = torch.zeros(*size).to(embedded_data.device)
             else:
-                hidden_state = [torch.zeros(*size), torch.zeros(*size)]
-        embedded_data = self._embedding(input_vector)  # (batch, seq, embedding)
-        hidden_state = hidden_state.to(embedded_data.device)
+                hidden_state = [torch.zeros(*size).to(embedded_data.device), torch.zeros(*size).to(embedded_data.device)]
         output_vector, hidden_state_out = self._rnn(embedded_data, hidden_state)
 
         if self._layer_normalization:
@@ -376,7 +375,7 @@ class Model:
             if self.network._get_name() == 'RNNCritic' else None
         # NOTE: The first token never gets added in the loop so the sequences are initialized with a start token
         hidden_state = None
-        nlls = torch.zeros(batch_size)
+        nlls = torch.zeros(batch_size).to(self.device)
         for _ in range(self.max_sequence_length - 1):
             logits, value, hidden_state = self.network(input_vector.unsqueeze(1), hidden_state)
             logits = logits.squeeze(1) / temperature

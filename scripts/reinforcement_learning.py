@@ -31,7 +31,7 @@ def main(args):
         json.dump(vars(args), f)
 
     # Setup device
-    args.device = utils.set_default_device_cuda(args.device)
+    args.device = utils.get_device(args.device)
     logger.info(f'Device set to {args.device.type}')
 
     # Setup RL
