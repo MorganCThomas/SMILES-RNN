@@ -145,6 +145,8 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
+    if args.psmiles:
+        assert not (args.psmiles.startswith("*") or args.psmiles.startswith("(*)")), "Partial SMILES should not start with attachment point, please insert as branches after atleast one atom e.g., C(*)"
     # Correct some input arguments
     if args.rl_strategy == 'RV2':
         args.rl_strategy = 'RV'

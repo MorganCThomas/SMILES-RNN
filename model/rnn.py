@@ -235,6 +235,22 @@ class Model:
         padded_sequences = collate_fn(sequences)
         return self.likelihood(padded_sequences)
 
+    def probability_smiles(self, smiles) -> torch.Tensor:
+        tokens = [self.tokenizer.tokenize(smile) for smile in smiles]
+        encoded = [self.vocabulary.encode(token) for token in tokens]
+        sequences = [torch.tensor(encode, dtype=torch.long) for encode in encoded]
+
+        def collate_fn(encoded_seqs):
+            """Function to take a list of encoded sequences and turn them into a batch"""
+            max_length = max([seq.size(0) for seq in encoded_seqs])
+            collated_arr = torch.zeros(len(encoded_seqs), max_length, dtype=torch.long)  # padded with zeroes
+            for i, seq in enumerate(encoded_seqs):
+                collated_arr[i, :seq.size(0)] = seq
+            return collated_arr
+
+        padded_sequences = collate_fn(sequences)
+        return self.probabilities(padded_sequences)
+
     def likelihood(self, sequences) -> torch.Tensor:
         """
         Retrieves the likelihood of a given sequence. Used in training.
@@ -256,6 +272,7 @@ class Model:
           (batch_size, sequence length) Probabilities for each example.
           (batch_size, sequence length) Log probabilities for each example.
         """
+        sequences = sequences.to(self.device)
         logits, critic_values, _ = self.network(sequences[:, :])
         probs = logits.softmax(dim=2)
         log_probs = logits.log_softmax(dim=2)
@@ -265,7 +282,7 @@ class Model:
             for t, (a, p, lp) in enumerate(zip(seq, prob, log_prob)):
                 action_probs[i, t] = p[a]
                 action_log_probs[i, t] = lp[a]
-        return action_probs, action_log_probs, critic_values
+        return sequences, logits, action_probs, action_log_probs, critic_values
 
     def entropy(self, sequences) -> torch.Tensor:
         """
@@ -377,7 +394,8 @@ class Model:
         :param at_idx: Selected attachment index
         :return: Optimal SMILES, respective NLL
         """
-        # Possibly optimal smiles
+        # Possibly optimal smiles (RDKit root must be * idx and not attachment point), need to correct attachment indexes to RDKit indexes
+        at_idx = utils.correct_attachment_idx(smi, at_idx)
         rand_smi = utils.randomize_smiles(smi, n_rand=10, random_type='restricted', rootAtom=at_idx, reverse=True)
         if rand_smi is None:
             return smi, None
@@ -537,13 +555,22 @@ class Model:
                 batch_psmis = [utils.insert_attachment_points(smi, a)[0] for smi, a in zip(batch_smis, batch_at_pts)]
                 # Select another attachment point
                 sel_pts = [np.random.choice(a, 1, replace=False)[0] for a in batch_at_pts]
+                try:
                 # Optimize psmiles
-                opt_psmis = [self._optimize_partial_smiles(psmi, s)[0] for psmi, s in zip(batch_psmis, sel_pts)]
+                    opt_psmis = [self._optimize_partial_smiles(psmi, s)[0] for psmi, s in zip(batch_psmis, sel_pts)]
                 # Strip (batch_at_pts index may have changed) -> (psmi, at_pts)
-                opt_psmis_stripped = [utils.strip_attachment_points(opt_psmi) for opt_psmi in opt_psmis]
-                batch_at_pts = np.asarray([x[1] for x in opt_psmis_stripped])
-                opt_psmis_stripped = [x[0] for x in opt_psmis_stripped]
-                batch_at_pts = np.delete(batch_at_pts, -1, 1) # Remove last attachment point used
+                    opt_psmis_stripped = [utils.strip_attachment_points(opt_psmi) for opt_psmi in opt_psmis]
+                    batch_at_pts = np.asarray([x[1] for x in opt_psmis_stripped])
+                    opt_psmis_stripped = [x[0] for x in opt_psmis_stripped]
+                    batch_at_pts = np.delete(batch_at_pts, -1, 1) # Remove last attachment point used
+                except:
+                    from IPython.display import display
+                    display(list(enumerate(batch_at_pts)))
+                    display(list(enumerate(batch_smis)))
+                    display(list(enumerate(batch_psmis)))
+                    display(list(enumerate(opt_psmis)))
+                    display(list(enumerate(opt_psmis_stripped)))
+                    raise
                 # Encode
                 batch_pseq_tokens = [self.tokenizer.tokenize(opt_psmi_stripped, with_begin_and_end=True) for opt_psmi_stripped in opt_psmis_stripped]
                 batch_pseq = torch.vstack([tf.pad(torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long), (0, self.max_sequence_length - len(tokens))) for tokens in batch_pseq_tokens])

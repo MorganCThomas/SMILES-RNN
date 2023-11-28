@@ -3,6 +3,7 @@ Vocabulary helper class from https://github.com/MolecularAI/Reinvent
 """
 
 import re
+import copy
 import numpy as np
 
 import deepsmiles
@@ -94,6 +95,11 @@ class SMILESTokenizer:
         "atom": re.compile(r"[a-zA-Z]")
     }
     REGEXP_ORDER = ["brackets", "2_ring_nums", "brcl"]
+
+    def __init__(self):
+        self.GRAMMAR = copy.deepcopy(self.GRAMMAR)
+        self.REGEXPS = copy.deepcopy(self.REGEXPS)
+        self.REGEXP_ORDER = copy.deepcopy(self.REGEXP_ORDER)
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string."""

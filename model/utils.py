@@ -150,6 +150,9 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", rootAtom=None, re
             if reverse:
                 assert "*" not in smi, "Unexpected behaviour when smiles contain a wildcard character (*), please use restricted randomization"
                 random_smiles = reverse_smiles(random_smiles)
+
+            # Convert back to (*)
+            random_smiles = bracket_attachments(random_smiles)
             
             rand_smiles.append(random_smiles)
                 
@@ -172,13 +175,17 @@ def randomize_smiles(smi, n_rand=10, random_type="restricted", rootAtom=None, re
                 random_smiles = Chem.MolToSmiles(random_mol, canonical=False, isomericSmiles=False)
 
             if reverse:
+                # TODO sometimes RDKit assigns the same ring index to different rings, causing an error upon reversing
                 random_smiles = reverse_smiles(random_smiles)
+
+            # Convert back to (*)
+            random_smiles = bracket_attachments(random_smiles)
                 
             rand_smiles.append(random_smiles)
 
         return list(set(rand_smiles))
 
-def reverse_smiles(smiles, renumber_rings=False, v=False):
+def reverse_smiles(smiles, renumber_rings=True, v=False):
     """
     Reverse smiles while maintaining syntax
     """
@@ -198,12 +205,19 @@ def reverse_smiles(smiles, renumber_rings=False, v=False):
         if (t == '(') and (open_count == 0):
             # Grab branch source
             find_source = True
+            sbracket = False
             count_back = 1
             while find_source:
                 if re.match("[a-zA-Z]", smiles[i-count_back]):
+                    while sbracket: 
+                        if smiles[i-count_back] == '[':
+                            sbracket = False
+                        else:
+                            count_back += 1
                     open_close_idxs.append(i-count_back)
                     find_source = False
                 else:
+                    if smiles[i-count_back] == ']': sbracket = True # Correct for square bracket preceeding parenthesis
                     count_back += 1
             open_count += 1
         elif t == '(':
@@ -238,6 +252,9 @@ def reverse_smiles(smiles, renumber_rings=False, v=False):
     # Add bit after
     if len(open_close_idxs) > 0:
         splitted.append(smiles[open_close_idxs[-1]+1:])
+    # When we have no brackets
+    else:
+        splitted.append(smiles)
     # Remove blanks
     splitted = [s for s in splitted if s != '']
     if v: print(f'Parenthesis split:\n\t {splitted}')
@@ -309,47 +326,58 @@ def reverse_smiles(smiles, renumber_rings=False, v=False):
             new_rsmiles += c
         rsmiles = new_rsmiles
         if v: print(f'Rings reindexed:\n\t {rsmiles}')
-            
+ 
     return rsmiles
 
-# Functions
 def get_attachment_indexes(smi: str) -> list: # Utils
     """
     Identify atom idxs of attachment points (i.e., neighbours of *)
     :param smi: SMILES with (*) to denote where new atoms should be attached
     :return: Atom index of attachment points
     """
-    assert not (smi.startswith("*") or smi.startswith("(*)")), "Partial SMILES should not start with attachment point, please insert as branches after atleast one atom e.g., C(*)"
     tokenizer = SMILESTokenizer()
+    new_token = re.compile(r"([a-zA-Z][0-9]+)")
+    tokenizer.REGEXPS.update({'ring_atom': new_token})
+    tokenizer.REGEXP_ORDER.insert(2, 'ring_atom')
     tokens = tokenizer.tokenize(smi, with_begin_and_end=False)
     atom_regexp = [
         tokenizer.REGEXPS["brackets"],
         tokenizer.REGEXPS["brcl"],
-        tokenizer.REGEXPS["atom"]
+        tokenizer.REGEXPS["atom"],
+        tokenizer.REGEXPS["ring_atom"]
         ]
     atom_counter = 0
     attachment_points = []
     for t in tokens:
         if t == '*':
             attachment_points.append(atom_counter-1)
-            atom_counter += 1
         if any([regex.match(t) for regex in atom_regexp]):
-            atom_counter += 1
+            if tokenizer.REGEXPS["brackets"].match(t):
+                # Count multiple atoms in brackets
+                atom_counter += sum([bool(tokenizer.REGEXPS["atom"].match(c)) for c in t])
+            else:
+                atom_counter += 1
     return attachment_points
 
 def insert_attachment_points(smi: str, at_pts: list): # Utils
     """
-    Insert * to denote where new atoms are to be attached, atom order may change as so new atom index is returned
+    Insert (*) to denote where new atoms are to be attached
     :param smi: SMILES without (*)
-    :param at_pts: Atom index of attachment points
-    :return: SMILES with (*), Atom index of attachment points
+    :param at_pts: Atom index to append attachment points
+    :return: SMILES with (*), atom index of attachment points
     """
+    # Need to add ring number together with atom for token splitting
     tokenizer = SMILESTokenizer()
+    new_token = re.compile(r"([a-zA-Z][0-9]+)")
+    tokenizer.REGEXPS.update({'ring_atom': new_token})
+    tokenizer.REGEXP_ORDER.insert(2, 'ring_atom')
     tokens = tokenizer.tokenize(smi, with_begin_and_end=False)
+    
     atom_regexp = [
         tokenizer.REGEXPS["brackets"],
         tokenizer.REGEXPS["brcl"],
-        tokenizer.REGEXPS["atom"]
+        tokenizer.REGEXPS["atom"],
+        tokenizer.REGEXPS["ring_atom"]
         ]
     atom_counter = 0
     new_tokens = []
@@ -358,10 +386,18 @@ def insert_attachment_points(smi: str, at_pts: list): # Utils
         if any([regex.match(t) for regex in atom_regexp]):
             if atom_counter in at_pts:
                 new_tokens.append("(*)")
-            atom_counter += 1
+            if tokenizer.REGEXPS["brackets"].match(t):
+                # Count multiple atoms in brackets
+                bracket_atoms = sum([bool(tokenizer.REGEXPS["atom"].match(c)) for c in t])
+                # Check intermediate atom counts for new token
+                for bi in range(bracket_atoms):
+                    if atom_counter in at_pts: new_tokens.append("(*)")
+                    atom_counter += 1
+            else:
+                atom_counter += 1
     smi = ''.join(new_tokens)
-    # Inserting these will change atom numbering so recaculate at_pts
-    at_pts = get_attachment_indexes(smi)
+    # Inserting these should not change atom numbering
+    #assert at_pts == get_attachment_indexes(smi)
     return smi, at_pts
 
 def strip_attachment_points(smi: str):  # Utils
@@ -373,3 +409,86 @@ def strip_attachment_points(smi: str):  # Utils
     at_pts = get_attachment_indexes(smi)
     smi = smi.replace("(*)", "").replace("*", "")
     return smi, at_pts
+
+def bracket_attachments(smi):
+    """
+    Convert all * to ensure they are branching points (*)
+    """
+    # Replace start
+    nsmi = re.sub("^(\*)([a-zA-Z][0-9]?)", "\\2(\\1)", smi)
+    # Replace end
+    nsmi = re.sub("(\*)$", "(\\1)", nsmi)
+    # Replace un-isolated
+    nsmi = re.sub("([^(])(\*)", "\\1(\\2)", nsmi)
+    nsmi = re.sub("(\*)([^)])", "(\\1)\\2", nsmi)
+    return nsmi
+
+def correct_attachment_idx(smi: str, at_idx: int) -> int:
+    """
+    Correct the attachment index for rootAtom in RDKit
+    :param smi: Partial smiles with (*) denoting attachment points
+    :return: Actual RDKit index of dummy atom
+    """
+    tokenizer = SMILESTokenizer()
+    new_token = re.compile(r"([a-zA-Z][0-9]+)")
+    tokenizer.REGEXPS.update({'ring_atom': new_token})
+    tokenizer.REGEXP_ORDER.insert(2, 'ring_atom')
+    tokens = tokenizer.tokenize(smi, with_begin_and_end=False)
+    atom_regexp = [
+        tokenizer.REGEXPS["brackets"],
+        tokenizer.REGEXPS["brcl"],
+        tokenizer.REGEXPS["atom"],
+        tokenizer.REGEXPS["ring_atom"]
+        ]
+    atom_counter = 0
+    correction = 1
+    for t in tokens:
+        if atom_counter == at_idx:
+            break
+        if t == '*':
+            correction += 1
+        if any([regex.match(t) for regex in atom_regexp]):
+            if 'H' in t:
+                correction += -1 # Explicitly not counting H's in [] here
+            atom_counter += 1
+    return at_idx + correction
+
+def test_smiles_eq(smi1, smi2):
+    mol1 = Chem.MolFromSmiles(smi1)
+    mol2 = Chem.MolFromSmiles(smi2)
+    # Parse them
+    if not mol1:
+        return False, f'Parsing error: {smi1}'
+    if not mol2:
+        return False, f'Parsing error: {smi2}'
+    # Remove atom map
+    for mol in [mol1, mol2]:
+        for atom in mol.GetAtoms():
+            atom.SetAtomMapNum(0)
+    # Check smiles are the same
+    nsmi1 = Chem.MolToSmiles(mol1)
+    nsmi2 = Chem.MolToSmiles(mol2)
+    if nsmi1 != nsmi2:
+        return False, f'Inequivalent SMILES: {nsmi1} vs {nsmi2}'
+    # Check InChi
+    inchi1 = Chem.MolToInchi(mol1)
+    inchi2 = Chem.MolToInchi(mol2)
+    if inchi1 != inchi2:
+        return False, f'Inequivalent InChi\'s'
+    return True, ""
+
+def test_mol_eq(mol1, mol2):
+    mols = []
+    # Remove atom map
+    for mol in [mol1, mol2]:
+        if isinstance(mol, str):
+            mol = Chem.MolFromSmiles(mol)
+        for atom in mol.GetAtoms():
+            atom.SetAtomMapNum(0)
+        mols.append(mol)
+    # Check InChi
+    inchi1 = Chem.MolToInchi(mols[0])
+    inchi2 = Chem.MolToInchi(mols[1])
+    if inchi1 != inchi2:
+        return False, f'Inequivalent InChi\'s'
+    return True, ""
