@@ -245,7 +245,7 @@ class SELFIESTokenizer:
     GRAMMAR = 'SELFIES'
 
     def tokenize(self, data, with_begin_and_end=True):
-        """Tokenizes a SMILES string via conversion to deepSMILES"""
+        """Tokenizes a SMILES string via conversion to SELFIES"""
         data = selfies.encoder(data)
         tokens = list(selfies.split_selfies(data))
         if with_begin_and_end:
@@ -253,7 +253,7 @@ class SELFIESTokenizer:
         return tokens
 
     def untokenize(self, tokens, convert_to_smiles=True):
-        """Untokenizes a deepSMILES string followed by conversion to SMILES"""
+        """Untokenizes a SELFIES string followed by conversion to SMILES"""
         smi = ""
         for token in tokens:
             if token == "$":
@@ -266,6 +266,78 @@ class SELFIESTokenizer:
             except:
                 smi = None
         return smi
+
+
+class AISTokenizer:
+    """Deals with the tokenization and untokenization of SMILES."""
+
+    GRAMMAR = 'AIS'
+
+    def __init__(self):
+        try:
+            import atomInSmiles as AIS
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError("No module named 'atomInSmiles'. Install with 'pip install atomInSmiles'.")
+
+    def tokenize(self, data, with_begin_and_end=True):
+        """Tokenizes a SMILES string via conversion to atomInSmiles"""
+        data = AIS.encode(data)
+        tokens = data.split(" ")
+        if with_begin_and_end:
+            tokens = ["^"] + tokens + ["$"]
+        return tokens
+
+    def untokenize(self, tokens, convert_to_smiles=True):
+        """Untokenizes an atomInSmiles string followed by conversion to SMILES"""
+        smi = ""
+        for token in tokens:
+            if token == "$":
+                smi = smi.rstrip()
+                break
+            if token != "^":
+                smi += token + " "
+        if convert_to_smiles:
+            try:
+                smi = AIS.decode(smi)
+            except:
+                smi = None
+        return smi
+
+
+class SAFETokenizer:
+    """Deals with the tokenization and untokenization of SMILES."""
+
+    GRAMMAR = 'SAFE'
+
+    def __init__(self):
+        try:
+            import safe
+        except:
+            raise ModuleNotFoundError("No module named 'safe'. Install with 'pip install safe-mol'.")
+
+    def tokenize(self, data, with_begin_and_end=True):
+        """Tokenizes a SMILES string via conversion to atomInSmiles"""
+        data = safe.encode(data)
+        tokens = safe.split(data)
+        if with_begin_and_end:
+            tokens = ["^"] + tokens + ["$"]
+        return tokens
+
+    def untokenize(self, tokens, convert_to_smiles=True):
+        """Untokenizes an atomInSmiles string followed by conversion to SMILES"""
+        smi = ""
+        for token in tokens:
+            if token == "$":
+                break
+            if token != "^":
+                smi += token
+        if convert_to_smiles:
+            try:
+                smi = safe.decode(smi)
+            except:
+                smi = None
+        return smi
+
 
 class SmiZipTokenizer:
     """Deals with the tokenization and untokenization of SmiZipped SMILES."""
@@ -294,6 +366,7 @@ class SmiZipTokenizer:
                 continue
             ntokens.append(token)
         return "".join(ntokens) if convert_to_smiles else ",".join(ntokens)
+
 
 def create_vocabulary(smiles_list, tokenizer):
     """Creates a vocabulary for the SMILES syntax."""
