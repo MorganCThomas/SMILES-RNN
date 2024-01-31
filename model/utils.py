@@ -10,7 +10,7 @@ import numpy as np
 from model.vocabulary import SMILESTokenizer, DeepSMILESTokenizer
 import torch.utils.tensorboard.summary as tbxs
 from rdkit import Chem
-from rdkit.Chem import Descriptors
+from rdkit.Chem import Descriptors, rdqueries
 import rdkit.Chem.Draw as Draw
 
 logger = logging.getLogger('utils')
@@ -329,6 +329,49 @@ def reverse_smiles(smiles, renumber_rings=True, v=False):
  
     return rsmiles
 
+def correct_ring_numbers(smi1, smi2) -> str:
+    """Given the rings in smi1, reindex the rings in smi2"""
+    # WARNING: Limited to < 10 rings as treats each number as an individual ring
+
+    # Count rings in smi1
+    ring_count = 0
+    square_brackets = False
+    for ci, c in enumerate(smi1):
+        # Ignore numbers in square brackets
+        if c == '[':
+            square_brackets = True
+        if c == ']':
+            square_brackets = False
+        if not square_brackets:
+            # Check for number
+            if re.search("[0-9]", c):
+                # Count max ring index
+                ring_count = max(ring_count, int(c))
+    
+    # Reindex smi2
+    ring_map = {}
+    square_brackets = False
+    new_smi2 = ""
+    for ci, c in enumerate(smi2):
+        # First evaluate if we are in square brackets
+        if c == '[':
+            square_brackets = True
+        if c == ']':
+            square_brackets = False
+        if not square_brackets:
+            # Check for number
+            if re.search("[0-9]", c):
+                # Add to ring map
+                if c not in ring_map.keys(): #not any([rn == mi for mi, mo in ring_map]):
+                    ring_count += 1
+                    ring_map[c] = str(ring_count) #.append((rn, str(ring_count)))
+                # Update c
+                c = ring_map[c]
+        # Add token
+        new_smi2 += c
+    return new_smi2
+
+
 def get_attachment_indexes(smi: str) -> list: # Utils
     """
     Identify atom idxs of attachment points (i.e., neighbours of *)
@@ -348,9 +391,29 @@ def get_attachment_indexes(smi: str) -> list: # Utils
         ]
     atom_counter = 0
     attachment_points = []
-    for t in tokens:
+    for i, t in enumerate(tokens):
         if t == '*':
-            attachment_points.append(atom_counter-1)
+            if (i >= 2) and (tokens[i-2] == ')'):
+                # NOTE need to correct for other branches proceeding
+                correction, branch_open, i_rev = 1, 0, 2
+                while tokens[i-i_rev] == ')': # Open brackets
+                    branch_open = 1
+                    i_rev += 1
+                    while branch_open:
+                        if tokens[i-i_rev] == '(':
+                            branch_open -= 1
+                        elif tokens[i-i_rev] == ')':
+                            branch_open += 1
+                        else:
+                            rev_t = tokens[i-i_rev]
+                            if any([regex.match(rev_t) for regex in atom_regexp]):
+                                if tokenizer.REGEXPS["brackets"].match(rev_t): correction += sum([bool(tokenizer.REGEXPS["atom"].match(c)) for c in rev_t])
+                                else: correction += 1
+                        i_rev += 1
+                attachment_points.append(atom_counter-correction)
+                # -----
+            else:
+                attachment_points.append(atom_counter-1)
         if any([regex.match(t) for regex in atom_regexp]):
             if tokenizer.REGEXPS["brackets"].match(t):
                 # Count multiple atoms in brackets
@@ -492,3 +555,118 @@ def test_mol_eq(mol1, mol2):
     if inchi1 != inchi2:
         return False, f'Inequivalent InChi\'s'
     return True, ""
+
+def extract_linker(smiles, fragments=[], return_all=False):
+    mol = Chem.MolFromSmiles(smiles)
+    
+    if not mol:
+        return None
+
+    # Sort frags by largest SMILES first
+    fragments = sorted(fragments, key=lambda x: len(x), reverse=True)
+
+    for frag in fragments:
+        # Get frag
+        sfrag, _ = strip_attachment_points(frag) ###
+        # Remove explicit Hs as no substructure match otherwise (RDKit seems to have a bug, doesn't work)
+        sfrag = re.sub(r"\[([a-zA-Z])H\]", "\\1", sfrag)
+        fmol = Chem.MolFromSmiles(sfrag)
+        # Get attachment point
+        for match in mol.GetSubstructMatches(fmol): 
+            fragment_point = set()
+            attachment_points = set()
+            for idx in match:
+                atom = mol.GetAtomWithIdx(idx)
+                neighbour_atoms = atom.GetNeighbors()
+                for natom in neighbour_atoms:
+                    nidx = natom.GetIdx()
+                    if nidx not in match:
+                        fragment_point.add(idx)
+                        attachment_points.add(nidx)
+            if len(fragment_point) == 1:
+                break
+
+        # An end fragment should have exactly one fragment atom attached
+        # This may cause an error if the RNN has added the exact same fragment in the middle of the linker
+        if not mol.HasSubstructMatch(fmol) or (len(fragment_point) != 1):
+            return None
+        
+        # Add attachment points
+        mol = Chem.RWMol(mol)
+        fp = fragment_point.pop()
+        mol.AddAtom(Chem.AtomFromSmiles("*"))
+        for ap in attachment_points:
+            # Get bond type first
+            fatom_bonds = mol.GetAtomWithIdx(fp).GetBonds()
+            fl_bond_type = [bond.GetBondType() for bond in fatom_bonds if (bond.GetBeginAtomIdx() == ap) or (bond.GetEndAtomIdx() == ap)][0]
+            # Add bond
+            mol.AddBond(ap, mol.GetNumAtoms()-1, fl_bond_type)
+        # Delete substructure match
+        mol.BeginBatchEdit()
+        for aid in match:
+            mol.RemoveAtom(aid)
+        mol.CommitBatchEdit()
+        try:
+            Chem.SanitizeMol(mol)
+        except:
+            return None
+
+    linker = Chem.MolToSmiles(mol)
+    if "." in linker:
+        links = [f.count("*") for i, f in enumerate(linker.split("."))]
+        linker = linker.split(".")[np.argmax(links)]
+
+    return linker
+
+def atom2seq_atommap(seq, vocabulary):
+    """Map atom indexes to index in an encoded sequence"""
+    # Tokenize SMILES
+    tokens = vocabulary.decode(seq.data.cpu().numpy())
+    # Map any atom token to an idx
+    tokenizer = SMILESTokenizer()
+    atom_regexp = [
+        tokenizer.REGEXPS["brackets"],
+        tokenizer.REGEXPS["brcl"],
+        tokenizer.REGEXPS["atom"],
+        ]
+    atom_counter = 0
+    atom_map = {}
+    for ti, t in enumerate(tokens):
+        if any([regex.match(t) for regex in atom_regexp]):
+            atom_map[atom_counter] = ti 
+            atom_counter += 1
+    return atom_map
+
+def smiles2smarts(smiles):
+    """Convert a SMILES sequence to a more specific SMARTS query including degree, aromaticity and ring membership"""
+    smiles = smiles.replace("(*)", "*")
+    mol = Chem.MolFromSmiles(smiles)
+    mol2 = Chem.RWMol(mol)
+    for i, at in enumerate(mol.GetAtoms()):
+        if at.GetSymbol() == "*":
+            continue
+        num = at.GetAtomicNum()
+        degree = at.GetDegree()
+        aromatic = at.GetIsAromatic()
+        ring = at.IsInRing()
+        q = rdqueries.AtomNumEqualsQueryAtom(num)
+        q.ExpandQuery(rdqueries.ExplicitDegreeEqualsQueryAtom(degree))
+        if aromatic: q.ExpandQuery(rdqueries.IsAromaticQueryAtom())
+        if ring: q.ExpandQuery(rdqueries.IsInRingQueryAtom())
+        mol2.ReplaceAtom(i, q)
+    smarts = Chem.MolToSmarts(mol2)
+    smarts = smarts.replace("[#0]", "[*]")
+    return smarts
+
+def find_existing_fragment(smiles, frag_smiles):
+    """Get substructure match for frag smiles (with attachment index first)"""
+    frag_indexes = []
+    mol = Chem.MolFromSmiles(smiles)
+    assert frag_smiles.startswith("(*)"), "Fragment must start with attachment point (*)"
+    frag_smarts = smiles2smarts(frag_smiles)
+    frag_patt = Chem.MolFromSmarts(frag_smarts)
+    if mol:
+        if mol.HasSubstructMatch(frag_patt):
+            frag_indexes = list(mol.GetSubstructMatches(frag_patt))
+    return frag_indexes
+

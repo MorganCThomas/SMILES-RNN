@@ -4,6 +4,7 @@ Adaption of RNN model from https://github.com/MolecularAI/Reinvent
 
 from functools import partial
 from typing import List, Tuple, Union
+import warnings
 import numpy as np
 import torch
 import torch.nn as nn
@@ -204,20 +205,25 @@ class Model:
                 param.requires_grad = False
         return model
 
-    def save(self, file: str):
+    def save(self, file: str, state_only=False):
         """
         Saves the model into a file
         :param file: it's actually a path
         """
-        save_dict = {
-            'vocabulary': self.vocabulary,
-            'tokenizer': self.tokenizer,
-            'max_sequence_length': self.max_sequence_length,
-            'network': self.network.state_dict(),
-            'network_type': self.network._get_name(),
-            'network_params': self.network.get_params()
-        }
-        torch.save(save_dict, file)
+        if state_only:
+            torch.save(self.network.state_dict(), file)
+            with open(file + ".voc", "wt") as f:
+                [f.write(t+"\n") for t in self.vocabulary.tokens()]
+        else:
+            save_dict = {
+                'vocabulary': self.vocabulary,
+                'tokenizer': self.tokenizer,
+                'max_sequence_length': self.max_sequence_length,
+                'network': self.network.state_dict(),
+                'network_type': self.network._get_name(),
+                'network_params': self.network.get_params()
+            }
+            torch.save(save_dict, file)
 
     def likelihood_smiles(self, smiles) -> torch.Tensor:
         tokens = [self.tokenizer.tokenize(smile) for smile in smiles]
@@ -234,6 +240,11 @@ class Model:
 
         padded_sequences = collate_fn(sequences)
         return self.likelihood(padded_sequences)
+
+    def _pSMILES_evaluate(self, smiles) -> torch.Tensor:
+        with torch.no_grad():
+            nll = self.likelihood_smiles(smiles)
+            return nll.cpu()
 
     def probability_smiles(self, smiles) -> torch.Tensor:
         tokens = [self.tokenizer.tokenize(smile) for smile in smiles]
@@ -343,7 +354,7 @@ class Model:
             kls[i] = torch.tensor(seq_kls).mean()
         return kls
 
-    def sample_native(self, num=128, batch_size=128, temperature=1.0, partial=None) -> Tuple[List, np.array]:
+    def sample_native(self, num=128, batch_size=128, temperature=1.0, psmiles=None) -> Tuple[List, np.array]:
         """
         Samples n strings from the model according to the native grammar.
         :param num: Number of SMILES to sample.
@@ -352,8 +363,15 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        if partial is not None:
-            seqs, likelihoods, _, _, _ = self._batch_sample_partial(num=num, temperature=temperature, partial_smiles=partial)
+        if psmiles is not None:
+            if isinstance(psmiles, str):
+                seqs, likelihoods, probs, log_probs, values = self._batch_sample_decorate(num=batch_size, temperature=temperature, ssmiles=psmiles, shuffle=psmiles_shuffle)
+            elif isinstance(psmiles, list):
+                seqs, likelihoods, probs, log_probs, values = self._batch_sample_link(num=batch_size, temperature=temperature, fsmiles=psmiles, shuffle=psmiles_shuffle)
+            else:
+                raise ValueError("Prompt SMILES format not recognized")
+            seqs = seqs[:, -1, :].data
+            likelihoods = likelihoods[:, -1]
         else:
             seqs, likelihoods, _, _, _ = self._batch_sample(num=num, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq), convert_to_smiles=False)
@@ -361,7 +379,7 @@ class Model:
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
-    def sample_smiles(self, num=128, batch_size=128, temperature=1.0, partial=None) -> Tuple[List, np.array]:
+    def sample_smiles(self, num=128, batch_size=128, temperature=1.0, psmiles=None, psmiles_shuffle=True) -> Tuple[List, np.array]:
         """
         Samples n SMILES from the model.
         :param num: Number of SMILES to sample.
@@ -370,24 +388,40 @@ class Model:
             :smiles: (n) A list with SMILES.
             :likelihoods: (n) A list of likelihoods.
         """
-        if partial is not None:
-            seqs, likelihoods, _, _, _ = self._batch_sample_partial(num=num, batch_size=batch_size, temperature=temperature, partial_smiles=partial)
+        if psmiles is not None:
+            if isinstance(psmiles, str):
+                seqs, likelihoods, probs, log_probs, values = self._batch_sample_decorate(num=batch_size, temperature=temperature, ssmiles=psmiles, shuffle=psmiles_shuffle)
+            elif isinstance(psmiles, list):
+                seqs, likelihoods, probs, log_probs, values = self._batch_sample_link(num=batch_size, temperature=temperature, fsmiles=psmiles, shuffle=psmiles_shuffle)
+            else:
+                raise ValueError("Prompt SMILES format not recognized")
+            seqs = seqs[:, -1, :].data
+            likelihoods = likelihoods[:, -1]
         else:
             seqs, likelihoods, _, _, _ = self._batch_sample(num=num, batch_size=batch_size, temperature=temperature)
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         likelihoods = likelihoods.data.cpu().numpy()
         return smiles, likelihoods
 
-    def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0, partial=None) -> \
+    def sample_sequences_and_smiles(self, batch_size=128, temperature=1.0, psmiles=None, psmiles_shuffle=True, return_psmiles=False) -> \
             Tuple[torch.Tensor, List, torch.Tensor, torch.Tensor, torch.Tensor, Union[torch.Tensor, None]]:
-        if partial is not None:
-            seqs, likelihoods, probs, log_probs, values = self._batch_sample_partial(num=batch_size, temperature=temperature, partial_smiles=partial)
+        if psmiles is not None:
+            if isinstance(psmiles, str):
+                seqs, likelihoods, probs, log_probs, values = self._batch_sample_decorate(num=batch_size, temperature=temperature, ssmiles=psmiles, shuffle=psmiles_shuffle)
+            elif isinstance(psmiles, list):
+                seqs, likelihoods, probs, log_probs, values = self._batch_sample_link(num=batch_size, temperature=temperature, fsmiles=psmiles, shuffle=psmiles_shuffle)
+            else:
+                raise ValueError("Prompt SMILES format not recognized")
+            if return_psmiles:
+                smiles = [[self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs[:, i, :].data.cpu().numpy()] for i in range(seqs.shape[1])]
+            else:
+                smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs[:, -1, :].data.cpu().numpy()]
         else:
             seqs, likelihoods, probs, log_probs, values = self._batch_sample(num=batch_size, temperature=temperature)
-        smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
+            smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         return seqs, smiles, likelihoods, probs, log_probs, values
 
-    def _optimize_partial_smiles(self, smi: str, at_idx: int):  # Model
+    def _optimize_partial_smiles(self, smi: str, at_idx: int, reverse=True):  # Model
         """
         Optimize partial SMILES for a particular attachment index with respect to the current model
         :param smi: SMILES with (*)
@@ -396,20 +430,35 @@ class Model:
         """
         # Possibly optimal smiles (RDKit root must be * idx and not attachment point), need to correct attachment indexes to RDKit indexes
         at_idx = utils.correct_attachment_idx(smi, at_idx)
-        rand_smi = utils.randomize_smiles(smi, n_rand=10, random_type='restricted', rootAtom=at_idx, reverse=True)
+        rand_smi = utils.randomize_smiles(smi, n_rand=10, random_type='restricted', rootAtom=at_idx, reverse=reverse)
         if rand_smi is None:
+            # TODO root and reverse smiles when RDKit randomization files?
             return smi, None
         with torch.no_grad():
-            nlls = self.likelihood_smiles([utils.strip_attachment_points(smi)[0] for smi in rand_smi]).cpu().numpy()
+            try:
+                nlls = self.likelihood_smiles([utils.strip_attachment_points(smi)[0] for smi in rand_smi]).cpu().numpy()
+            except KeyError:
+                # RDKit sometimes inserts a token that may not have been present in the vocabulary
+                warnings.warn(f"SMILES optimization failed for {smi}")
+                return smi, None
+        
         opt_idx = np.argmin(nlls)
         opt_smi = rand_smi[opt_idx]
         opt_nll = nlls[opt_idx]
         return opt_smi, opt_nll
     
     def _preferred_smiles(self, smiles):
-        alt_smiles = list(set([smiles] + utils.randomize_smiles(smiles, keep_last=True) + utils.randomize_smiles(smiles, random_type='unrestricted', keep_last=True)))
+        rand_smi = utils.randomize_smiles(smiles)
+        if rand_smi is None:
+            return smiles, None
+        alt_smiles = list(set([smiles] + rand_smi))
         with torch.no_grad():
-            nlls = self.likelihood_smiles(alt_smiles).cpu().numpy()
+            try:
+                nlls = self.likelihood_smiles(alt_smiles).cpu().numpy()
+            except KeyError:
+                # RDKit sometimes inserts a token that may not have been present in the vocabulary
+                warnings.warn(f"SMILES optimization failed for {smiles}")
+                return smiles, None
         preferred_smiles, nll = list(sorted(zip(alt_smiles, nlls), key=lambda x: x[1]))[0]
         return preferred_smiles, nll
 
@@ -508,24 +557,54 @@ class Model:
         return sequences.data, nlls, action_probs, action_log_probs, values
 
     @torch.no_grad()
-    def _batch_sample_partial(self, num=128, batch_size=64, temperature=1.0, partial_smiles=None):
+    def _pSMILES_sample(self, prompt: Union[str, list] = None, batch_size: int = 64):
+        if isinstance(prompt, str):
+            # Convert prompt to sequence
+            pseq = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.long)
+            tokens = self.tokenizer.tokenize(prompt, with_begin_and_end=True)[:-1] # Ignore stop token
+            encoded = torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long)
+            pseq[:, :encoded.size(0)] = encoded
+            pseq = pseq.to(self.device)
+        elif isinstance(prompt, list):
+            assert len(prompt) == batch_size, "Number of prompts provided must match batch size"
+            # Convert prompts to sequence
+            try:
+                seqs = [self.vocabulary.encode(self.tokenizer.tokenize(p, with_begin_and_end=True)[:-1]) for p in prompt] # ignore stop token
+            except:
+                print(prompt)
+                raise
+            pseq = torch.vstack([tf.pad(torch.tensor(seq, dtype=torch.long), (0, self.max_sequence_length - len(seq))) for seq in seqs]).to(self.device)
+        else:
+            pseq = None
+
+        # Pass to _sample with pseq
+        seqs, nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=batch_size, pseq=pseq)
+        # Convert to SMILES
+        smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
+        nlls = nlls.data.cpu().numpy()
+
+        return smiles, nlls
+    
+    @torch.no_grad()
+    def _batch_sample_decorate(self, num=128, batch_size=64, temperature=1.0, ssmiles=None, shuffle=True):
         # ----- Prep-process partial smiles
-        at_pts = utils.get_attachment_indexes(partial_smiles)
+        at_pts = utils.get_attachment_indexes(ssmiles)
         n_pts = len(at_pts)
-        init_psmiles = []
+        init_ssmiles = []
         for aidx in at_pts:
-            opt_psmi, _ = self._optimize_partial_smiles(partial_smiles, aidx)
+            opt_psmi, opt_psmi_nll = self._optimize_partial_smiles(ssmiles, aidx)
             opt_psmi_stripped, rem_pts = utils.strip_attachment_points(opt_psmi)
             rem_pts.pop(-1)
             tokens = self.tokenizer.tokenize(opt_psmi_stripped, with_begin_and_end=True)
             pseq = torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long)
-            init_psmiles.append((pseq, rem_pts))
+            init_ssmiles.append((pseq, rem_pts, opt_psmi_nll))
+        init_ssmiles = sorted(init_ssmiles, key=lambda x: x[2])
         
         # ----- Create placeholders
-        sequences = torch.zeros((num, self.max_sequence_length), dtype=torch.long)
-        nlls = torch.zeros(num, device=self.device)
-        action_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
-        action_log_probs = torch.zeros((num, self.max_sequence_length), requires_grad=False)
+        sequences = torch.zeros((num, len(at_pts), self.max_sequence_length), dtype=torch.long)
+        nlls = torch.zeros((num, len(at_pts)), device=self.device)
+        action_probs = torch.zeros((num, len(at_pts), self.max_sequence_length), requires_grad=False)
+        action_log_probs = torch.zeros((num, len(at_pts), self.max_sequence_length), requires_grad=False)
         hidden_state = None
         
         # Sample in batches
@@ -539,61 +618,263 @@ class Model:
             batch_pseq = []
             batch_at_pts = []
             for _ in range(size):
-                i = np.random.choice(list(range(n_pts)), 1)[0]
-                batch_pseq.append(init_psmiles[i][0])
-                batch_at_pts.append(init_psmiles[i][1])
+                if shuffle: 
+                    i = np.random.choice(list(range(n_pts)), 1)[0]
+                else: 
+                    i = 0
+                batch_pseq.append(init_ssmiles[i][0])
+                batch_at_pts.append(init_ssmiles[i][1])
             batch_pseq = torch.vstack([tf.pad(seq, (0, self.max_sequence_length - len(seq))) for seq in batch_pseq])
             batch_at_pts = np.asarray(batch_at_pts)
             
             # Sample a single batch
             batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq.to(self.device))
+            sequences[batch_idx:batch_idx+size, 0, :] = batch_seqs
+            nlls[batch_idx:batch_idx+size, 0] += batch_nlls
+            action_probs.data[batch_idx:batch_idx+size, 0, :] = batch_action_probs
+            action_log_probs.data[batch_idx:batch_idx+size, 0, :] = batch_action_log_probs
             
             while batch_at_pts.shape[1]:
+                # Partial index (for update later)
+                pidx = len(at_pts) - batch_at_pts.shape[1]
                 # Convert sequences back to SMILES
                 batch_smis = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in batch_seqs.cpu().numpy()]
                 # Insert attachment point
                 batch_psmis = [utils.insert_attachment_points(smi, a)[0] for smi, a in zip(batch_smis, batch_at_pts)]
                 # Select another attachment point
-                sel_pts = [np.random.choice(a, 1, replace=False)[0] for a in batch_at_pts]
-                try:
-                # Optimize psmiles
-                    opt_psmis = [self._optimize_partial_smiles(psmi, s)[0] for psmi, s in zip(batch_psmis, sel_pts)]
+                if shuffle:
+                    sel_pts = [np.random.choice(a, 1, replace=False)[0] for a in batch_at_pts]
+                else:
+                    sel_pts = list(batch_at_pts[:, 0])
+                # Optimize ssmiles
+                opt_psmis = [self._optimize_partial_smiles(psmi, s)[0] for psmi, s in zip(batch_psmis, sel_pts)]
                 # Strip (batch_at_pts index may have changed) -> (psmi, at_pts)
-                    opt_psmis_stripped = [utils.strip_attachment_points(opt_psmi) for opt_psmi in opt_psmis]
-                    batch_at_pts = np.asarray([x[1] for x in opt_psmis_stripped])
-                    opt_psmis_stripped = [x[0] for x in opt_psmis_stripped]
-                    batch_at_pts = np.delete(batch_at_pts, -1, 1) # Remove last attachment point used
-                except:
-                    from IPython.display import display
-                    display(list(enumerate(batch_at_pts)))
-                    display(list(enumerate(batch_smis)))
-                    display(list(enumerate(batch_psmis)))
-                    display(list(enumerate(opt_psmis)))
-                    display(list(enumerate(opt_psmis_stripped)))
-                    raise
+                opt_psmis_stripped = [utils.strip_attachment_points(opt_psmi) for opt_psmi in opt_psmis]
+                batch_at_pts = np.asarray([x[1] for x in opt_psmis_stripped])
+                opt_psmis_stripped = [x[0] for x in opt_psmis_stripped]
+                batch_at_pts = np.delete(batch_at_pts, -1, 1) # Remove last attachment point used
                 # Encode
                 batch_pseq_tokens = [self.tokenizer.tokenize(opt_psmi_stripped, with_begin_and_end=True) for opt_psmi_stripped in opt_psmis_stripped]
                 batch_pseq = torch.vstack([tf.pad(torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long), (0, self.max_sequence_length - len(tokens))) for tokens in batch_pseq_tokens])
                 # Re-sample
                 batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=batch_pseq.to(self.device))
             
-            # Update
-            sequences[batch_idx:batch_idx+size, :] = batch_seqs
-            nlls[batch_idx:batch_idx+size] += batch_nlls
-            action_probs.data[batch_idx:batch_idx+size, :] = batch_action_probs
-            action_log_probs.data[batch_idx:batch_idx+size, :] = batch_action_log_probs
+                # Update
+                sequences[batch_idx:batch_idx+size, pidx, :] = batch_seqs
+                nlls[batch_idx:batch_idx+size, pidx] += batch_nlls
+                action_probs.data[batch_idx:batch_idx+size, pidx, :] = batch_action_probs
+                action_log_probs.data[batch_idx:batch_idx+size, pidx, :] = batch_action_log_probs
         
             # Update batch index
             batch_idx += size
         
-        # Trim any completely non zero cols
-        non_zero_cols = [col_idx for col_idx, col in enumerate(torch.split(sequences, 1, dim=1))
-                            if not torch.all(col == 0)]
-        sequences = sequences[:, non_zero_cols]
-        action_probs = action_probs[:, non_zero_cols]
-        action_log_probs = action_log_probs[:, non_zero_cols]
+        return sequences, nlls, action_probs, action_log_probs, None
+
+    @torch.no_grad()
+    def _batch_sample_link(self, num=128, batch_size=64, temperature=1.0, fsmiles=None, shuffle=True, scan=False, intermediate_optimize=False, intermediate_sample=False, detect_existing=True):
+        # ----- Prep-process fragment smiles
+        if len(fsmiles) > 2:
+            scan = True
+            warnings.warn("More than two fragments detected, sampling changed to scan") 
+        at_pts = [utils.get_attachment_indexes(fsmi)[0] for fsmi in fsmiles] # Should only be one per frag
+        n_fgs = len(fsmiles)
+        # Optimize each fragment, then strip and select
+        init_fsmiles = []
+        for aidx, frag in zip(at_pts, fsmiles):
+            # Optimize forward
+            for_fsmi, for_fsmi_nll = self._optimize_partial_smiles(frag, aidx, reverse=False)
+            for_fsmi_stripped, at_pt = utils.strip_attachment_points(for_fsmi)
+            tokens = self.tokenizer.tokenize(for_fsmi_stripped, with_begin_and_end=True)
+            for_pseq = torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long)[1:] # Drop start token
+            # Optimize reverse
+            rev_fsmi, rev_fsmi_nll = self._optimize_partial_smiles(frag, aidx)
+            rev_fsmi_stripped, at_pt = utils.strip_attachment_points(rev_fsmi)
+            tokens = self.tokenizer.tokenize(rev_fsmi_stripped, with_begin_and_end=True)
+            rev_pseq = torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long)
+            # Append
+            init_fsmiles.append((rev_pseq, rev_fsmi_stripped, rev_fsmi_nll, for_pseq, for_fsmi_stripped, for_fsmi_nll))
+        init_fsmiles = sorted(init_fsmiles, key=lambda x: x[2])
         
-        return sequences.data, nlls, action_probs, action_log_probs, None
+        # ----- Create placeholders
+        sequences = torch.zeros((num, n_fgs, self.max_sequence_length), dtype=torch.long)
+        nlls = torch.zeros((num, n_fgs), device=self.device)
+        action_probs = torch.zeros((num, n_fgs, self.max_sequence_length), requires_grad=False)
+        action_log_probs = torch.zeros((num, n_fgs, self.max_sequence_length), requires_grad=False)
+        hidden_state = None
+        
+        # Sample in batches
+        batch_sizes = [batch_size for _ in range(num // batch_size)]
+        batch_sizes += [num % batch_size] if num % batch_size != 0 else []
+        batch_idx = 0
+        EOS = self.vocabulary["$"]
+        
+        # ---- Sample
+        for size in batch_sizes:
+            # Randomize selection in batch
+            batch_rev_pseq = []
+            batch_for_pseq = []
+            for _ in range(size):
+                if shuffle: 
+                    init_i = np.random.choice(list(range(n_fgs)), 1)[0]
+                else: 
+                    init_i = 0
+                batch_rev_pseq.append(init_fsmiles[init_i])
+                batch_for_pseq.append([init_fsmiles[fi] for fi in range(n_fgs) if fi != init_i])
+            init_pseq = torch.vstack([tf.pad(seq[0], (0, self.max_sequence_length - len(seq[0]))) for seq in batch_rev_pseq])
+            
+            # Sample a single batch
+            batch_seqs, batch_nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=size, temperature=temperature, pseq=init_pseq.to(self.device))
+
+            # Update
+            sequences[batch_idx:batch_idx+size, 0, :] = batch_seqs
+            nlls[batch_idx:batch_idx+size, 0] += batch_nlls
+            #action_probs.data[batch_idx:batch_idx+size, 0, :] = batch_action_probs
+            #action_log_probs.data[batch_idx:batch_idx+size, 0, :] = batch_action_log_probs
+            
+            if scan:
+                for bi in range(len(batch_seqs)):
+                    # Iterate over fragments
+                    rem_fgs = len(batch_for_pseq[bi])
+                    fidx = 1
+                    fseq_idxs = []
+                    # Get initial reverse fragment 
+                    rev_seq = batch_rev_pseq[bi][0]
+                    bseq = batch_seqs[bi]
+                    while rem_fgs > 0:
+                        # Get current smiles
+                        bsmiles = self.tokenizer.untokenize(self.vocabulary.decode(bseq.data.cpu().numpy()))
+                        # Check to see if already inserted
+                        if detect_existing:
+                            for i, frag in enumerate(batch_for_pseq[bi]):
+                                for_fsmi = frag[4]
+                                for_fsmi = "(*)" + for_fsmi
+                                # Get atom map
+                                atom_map = utils.atom2seq_atommap(bseq, self.vocabulary)
+                                # Substructure match
+                                substruct_atoms = utils.find_existing_fragment(bsmiles, for_fsmi)
+                                fragment_exists = False
+                                for match in substruct_atoms:
+                                    # Check it's not in the original frag sequence and in the de novo generated part
+                                    if any(atom_map[atom] <= len(rev_seq) for atom in match):
+                                        continue
+                                    # Otherwise
+                                    fragment_exists = i
+                                    fseq_idxs.extend([atom_map[atom] for atom in match[1:]]) # First atom is attachment point which can be inserted
+
+                                # Update
+                                if fragment_exists:
+                                    #print(f'{batch_idx}:{bi}: Found existing {batch_for_pseq[bi][fragment_exists][4]} fragment')
+                                    _ = batch_for_pseq[bi].pop(fragment_exists)
+                                    rem_fgs -= 1
+                                    fidx += 1
+                                    sequences[batch_idx+bi, fidx, :] = bseq
+                                    nlls[batch_idx+bi, fidx] += batch_nlls[bi]
+                            # Recheck remaining frags
+                            if rem_fgs == 0:
+                                break
+                        # Sample fragment smiles
+                        if shuffle:
+                            fi = np.random.choice(list(range(rem_fgs)), 1)[0]
+                        else:
+                            fi = 0
+                        frag = batch_for_pseq[bi].pop(fi)
+                        for_fsmi = frag[4]
+                        # Make corrections and insert
+                        cfor_fsmi = utils.correct_ring_numbers(bsmiles, for_fsmi) # Correct rings
+                        try:
+                            for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(cfor_fsmi, with_begin_and_end=False)), dtype=torch.long)
+                        except KeyError as e:
+                            warnings.warn(f"Failed to correctly assign ring numbers to {for_fsmi} due to the following error {e}") ##
+                            for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(for_fsmi, with_begin_and_end=False)), dtype=torch.long)
+                        for_seq = torch.hstack([torch.tensor(self.vocabulary["("]), for_seq, torch.tensor(self.vocabulary[")"])]) # Add branch
+                        tseqs = []
+                        # Scan non initial fragment indices
+                        for si in range(len(rev_seq)-1, self.max_sequence_length - len(for_seq)):
+                            # Skip already inserted positions
+                            if si in fseq_idxs:
+                                continue
+                            # Insert fragment
+                            tseq = torch.hstack([bseq[:si], for_seq, bseq[si:self.max_sequence_length - len(for_seq)]])
+                            ins_idxs = list(range(si+1, si+len(for_seq)))
+                            if intermediate_optimize:
+                                # Convert to SMILES first or insert first
+                                smiles = self.tokenizer.untokenize(self.vocabulary.decode(tseq.data.cpu().numpy()))
+                                # Optimize and get NLL
+                                opt_smi, opt_nll = self._preferred_smiles(smiles)
+                                if opt_nll:
+                                    tseqs.append((si, tseq, ins_idxs, opt_nll))
+                            else:
+                                tseqs.append((si, tseq, ins_idxs, None))
+                            # If last token break
+                            if bseq[si] == self.vocabulary["$"]:
+                                break
+
+                        # Store sequences
+                        if not tseqs:
+                            # Don't add fragment if fails to insert
+                            opt_bseq = bseq
+                            opt_nll = batch_nlls[bi]
+                            opt_idxs = []
+                        else:
+                            if intermediate_optimize:
+                                # Select index with lowest NLL ...
+                                _, opt_bseq, opt_idxs, opt_nll = sorted(tseqs, key=lambda x: x[3])[0]
+                            else:
+                                # Assess NLL in one batch
+                                _ = torch.vstack([t[1] for t in tseqs])
+                                _nlls = self.likelihood(_).cpu().squeeze()
+                                if intermediate_sample:
+                                    _probs = torch.softmax(_nlls*-1, dim=0)
+                                    _idx = torch.multinomial(_probs, 1)
+                                    _, opt_bseq, opt_idxs, _ = tseqs[_idx]
+                                    opt_nll = _nlls[_idx]
+                                else:  
+                                    _, opt_bseq, opt_idxs, _ = tseqs[torch.argmin(_nlls)]
+                                    opt_nll = torch.min(_nlls)
+
+                        # Update
+                        sequences[batch_idx+bi, fidx, :] = opt_bseq
+                        nlls[batch_idx+bi, fidx] += opt_nll.squeeze()
+                        #action_probs.data[batch_idx+bi, fidx, :] = batch_action_probs
+                        #action_log_probs.data[batch_idx:batch_idx+size, fidx, :] = batch_action_log_probs
+
+                        # Update while loop
+                        rem_fgs -= 1
+                        fidx += 1
+                        fseq_idxs.extend(opt_idxs)
+                        bseq = opt_bseq
+                    
+                    #print(f'{bi}: Inserted {fidx-1} fragments into indexes {fseq_idxs}')
+        
+            # Append Final fragment
+            else:
+                for bi in range(len(batch_seqs)):
+                    # Correct fragment indexes
+                    bsmiles = self.tokenizer.untokenize(self.vocabulary.decode(batch_seqs[bi].data.cpu().numpy()))
+                    for_fsmi = batch_for_pseq[bi][0][4]
+                    cfor_fsmi = utils.correct_ring_numbers(bsmiles, for_fsmi) # Correct rings
+                    try:
+                        for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(cfor_fsmi, with_begin_and_end=True)), dtype=torch.long)[1:]
+                    except KeyError as e:
+                        warnings.warn("Failed to correctly assign ring numbers to {cfor_smi} due to the following error {e}")
+                        for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(for_fsmi, with_begin_and_end=True)), dtype=torch.long)[1:]
+                    # Append
+                    EOSi = torch.argwhere(batch_seqs[bi] == EOS).squeeze().min() # Get first end token (incase EOS is also padding)
+                    if EOSi+len(for_seq) > self.max_sequence_length:
+                        warnings.warn("Sequence length too large for additional fragments, increase max_seqeuence_length")
+                    else:
+                        batch_seqs[bi, EOSi:EOSi+len(for_seq)] = for_seq
+            
+                # Update
+                sequences[batch_idx:batch_idx+size, 1, :] = batch_seqs
+                nlls[batch_idx:batch_idx+size, 1] += batch_nlls
+                #action_probs.data[batch_idx:batch_idx+size, 1, :] = batch_action_probs
+                #action_log_probs.data[batch_idx:batch_idx+size, 1, :] = batch_action_log_probs
+        
+            # Update batch index
+            batch_idx += size
+        
+        return sequences, nlls, action_probs, action_log_probs, None
 
     def _beam_search(self, k) -> Tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError

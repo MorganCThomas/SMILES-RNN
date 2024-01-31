@@ -1,4 +1,5 @@
 import os
+import ast
 import argparse
 import logging
 import json
@@ -28,7 +29,7 @@ def main(args):
 
     # Save these parameters for good measure
     with open(os.path.join(ms.save_dir, 'SMILES-RNN.params'), 'wt') as f:
-        json.dump(vars(args), f)
+        json.dump(vars(args), f, indent=2)
 
     # Setup device
     args.device = utils.get_device(args.device)
@@ -61,31 +62,37 @@ def get_args():
 
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('-a', '--agent', type=str, help='Path to agent checkpoint (.ckpt)')
-    optional.add_argument('-d', '--device', default='gpu', help=' ')
+    optional.add_argument('-d', '--device', default='gpu', help='Device to use')
     optional.add_argument('-f', '--freeze', help='Number of RNN layers to freeze', type=int)
     optional.add_argument('--save_freq', type=int, default=100, help='How often to save models')
     optional.add_argument('--verbose', action='store_true', help='Whether to print loss')
-    optional.add_argument('--psmiles', type=str, default=None, help='Partial smiles prefix to constrain molecule generation')
+    optional.add_argument('--psmiles', type=str, default=None, 
+    help='Either scaffold smiles labelled with decoration points (*) or fragments for linking with connection points (*) and seperated by a period .')
+    optional.add_argument('--psmiles_multi', action='store_true', help='Whether to conduct multiple updates (1 per decoration)')
+    optional.add_argument(
+        '--psmiles_canonical', action='store_true',
+        help='Whether to attach decorations one at a time, based on attachment point with lowest NLL, otherwise attachment points will be shuffled within a batch'
+        )
 
     subparsers = parser.add_subparsers(title='RL strategy', dest='rl_strategy',
                                        help='Which reinforcement learning algorithm to use')
 
     reinvent_parser = subparsers.add_parser('RV', description="REINVENT",
                                             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    reinvent_parser.add_argument('--n_steps', type=int, default=500, help=' ')
-    reinvent_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    reinvent_parser.add_argument('--n_steps', type=int, default=500, help='Number of training iterations')
+    reinvent_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     reinvent_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     reinvent_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     reinvent2_parser = subparsers.add_parser('RV2', description="REINVENT (v2.0 defaults)",
                                              formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    reinvent2_parser.add_argument('--n_steps', type=int, default=250, help=' ')
-    reinvent2_parser.add_argument('--batch_size', type=int, default=128, help=' ')
+    reinvent2_parser.add_argument('--n_steps', type=int, default=250, help='Number of training iterations')
+    reinvent2_parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     reinvent2_parser.add_argument('-s', '--sigma', type=int, default=120, help='Scaling coefficient of score')
     reinvent2_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     bar_parser = subparsers.add_parser('BAR', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    bar_parser.add_argument('--n_steps', type=int, default=500, help=' ')
+    bar_parser.add_argument('--n_steps', type=int, default=500, help='Number of training iterations')
     bar_parser.add_argument('--batch_size', type=int, default=64, help='Batch size per agent (will be effectively doubled)')
     bar_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     bar_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
@@ -95,8 +102,8 @@ def get_args():
 
     augHC_parser = subparsers.add_parser('AHC', description="Augmented Hill-Climb",
                                          formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    augHC_parser.add_argument('--n_steps', type=int, default=500, help=' ')
-    augHC_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    augHC_parser.add_argument('--n_steps', type=int, default=500, help='Number of training iterations')
+    augHC_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     augHC_parser.add_argument('-s', '--sigma', type=int, default=60, help='Scaling coefficient of score')
     augHC_parser.add_argument('-k', '--topk', type=float, default=0.5, help='Fraction of top molecules to keep',
                               metavar="[0-1]")
@@ -104,20 +111,20 @@ def get_args():
 
     HC_parser = subparsers.add_parser('HC', description="Hill-Climb",
                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    HC_parser.add_argument('--n_steps', type=int, default=30, help=' ')
-    HC_parser.add_argument('--batch_size', type=int, default=1024, help=' ')
-    HC_parser.add_argument('--epochs_per_step', type=int, default=2, help=' ')
-    HC_parser.add_argument('--epochs_batch_size', type=int, default=256, help=' ')
+    HC_parser.add_argument('--n_steps', type=int, default=30, help='Number of training iterations')
+    HC_parser.add_argument('--batch_size', type=int, default=1024, help='Batch size')
+    HC_parser.add_argument('--epochs_per_step', type=int, default=2, help='Number of updates per iteration')
+    HC_parser.add_argument('--epochs_batch_size', type=int, default=256, help='Epoch batch size')
     HC_parser.add_argument('-k', '--topk', type=float, default=0.5, help='Fraction of top molecules to keep',
                            metavar="[0-1]")
     HC_parser.add_argument('-lr', '--learning_rate', type=float, default=5e-4, help='Adam learning rate')
 
     HCr_parser = subparsers.add_parser('HC-reg', description="Hill-Climb regularized",
                                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    HCr_parser.add_argument('--n_steps', type=int, default=30, help=' ')
-    HCr_parser.add_argument('--batch_size', type=int, default=1024, help=' ')
-    HCr_parser.add_argument('--epochs_per_step', type=int, default=2, help=' ')
-    HCr_parser.add_argument('--epochs_batch_size', type=int, default=256, help=' ')
+    HCr_parser.add_argument('--n_steps', type=int, default=30, help='Number of training iterations')
+    HCr_parser.add_argument('--batch_size', type=int, default=1024, help='Batch size')
+    HCr_parser.add_argument('--epochs_per_step', type=int, default=2, help='Number of updates per iteration')
+    HCr_parser.add_argument('--epochs_batch_size', type=int, default=256, help='Epoch batch size')
     HCr_parser.add_argument('-k', '--topk', type=float, default=0.5, help='Fraction of top molecules to keep',
                             metavar="[0-1]")
     HCr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=10,
@@ -126,31 +133,32 @@ def get_args():
 
     PG_parser = subparsers.add_parser('RF', description="REINFORCE",
                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    PG_parser.add_argument('--n_steps', type=int, default=500, help=' ')
-    PG_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    PG_parser.add_argument('--n_steps', type=int, default=500, help='Number of training iterations')
+    PG_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     PG_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
 
     PGr_parser = subparsers.add_parser('RF-reg', description="REINFORCE regularized",
                                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    PGr_parser.add_argument('--n_steps', type=int, default=500, help=' ')
-    PGr_parser.add_argument('--batch_size', type=int, default=64, help=' ')
+    PGr_parser.add_argument('--n_steps', type=int, default=500, help='Number of training iterations')
+    PGr_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     PGr_parser.add_argument('-ec', '--entropy_coefficient', type=float, default=0,
                             help='Coefficient of entropy loss contribution')
     PGr_parser.add_argument('-klc', '--kl_coefficient', type=float, default=10,
                             help='Coefficient of KL loss contribution')
     PGr_parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4, help='Adam learning rate')
-
-    return parser.parse_args()
-
-
-if __name__ == '__main__':
-    args = get_args()
-    if args.psmiles:
-        assert not (args.psmiles.startswith("*") or args.psmiles.startswith("(*)")), "Partial SMILES should not start with attachment point, please insert as branches after atleast one atom e.g., C(*)"
+    args = parser.parse_args()
+    # Process prompt smiles
+    if args.psmiles and ("." in args.psmiles):
+        args.psmiles = args.psmiles.split(".")
     # Correct some input arguments
     if args.rl_strategy == 'RV2':
         args.rl_strategy = 'RV'
     # Set agent as prior if not specified
     if args.agent is None:
         setattr(args, 'agent', args.prior)
+    return args
+
+
+if __name__ == '__main__':
+    args = get_args()
     main(args)
