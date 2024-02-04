@@ -4,6 +4,7 @@ Vocabulary helper class from https://github.com/MolecularAI/Reinvent
 
 import re
 import numpy as np
+from tqdm import tqdm
 
 try: import deepsmiles
 except: deepsmiles = None
@@ -382,7 +383,7 @@ class SmiZipTokenizer:
 def create_vocabulary(smiles_list, tokenizer):
     """Creates a vocabulary for the SMILES syntax."""
     tokens = set()
-    for smi in smiles_list:
+    for smi in tqdm(smiles_list, desc="Creating vocabulary"):
         tokens.update(tokenizer.tokenize(smi, with_begin_and_end=False))
 
     vocabulary = Vocabulary()
