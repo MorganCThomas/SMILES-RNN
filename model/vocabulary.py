@@ -5,12 +5,20 @@ Vocabulary helper class from https://github.com/MolecularAI/Reinvent
 import re
 import numpy as np
 
-import deepsmiles
-import selfies
-try:
-    import smizip
-except:
-    smizip = None
+try: import deepsmiles
+except: deepsmiles = None
+
+try: import selfies
+except: selfies = None
+
+try: import smizip
+except: smizip = None
+
+try: import atomInSmiles as AIS
+except: AIS = None
+
+try: import safe
+except: safe = None
 
 
 # contains the data structure
@@ -136,6 +144,8 @@ class DeepSMILESTokenizer:
     REGEXP_ORDER = ["brackets", "brcl"]
 
     def __init__(self, rings=True, branches=True, compress=False):
+        if deepsmiles is None:
+            raise ModuleNotFoundError("No module named 'deepsmiles'. Install with 'pip install deepsmiles'.")
         self.converter = deepsmiles.Converter(rings=rings, branches=branches)
         self.run_compression = compress
 
@@ -244,6 +254,10 @@ class SELFIESTokenizer:
 
     GRAMMAR = 'SELFIES'
 
+    def __init__(self):
+        if selfies is None:
+            raise ModuleNotFoundError("No module named 'selfies'. Install with 'pip install selfies'.")
+
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to SELFIES"""
         data = selfies.encoder(data)
@@ -274,10 +288,9 @@ class AISTokenizer:
     GRAMMAR = 'AIS'
 
     def __init__(self):
-        try:
-            import atomInSmiles as AIS
-        except ModuleNotFoundError:
+        if AIS is None:
             raise ModuleNotFoundError("No module named 'atomInSmiles'. Install with 'pip install atomInSmiles'.")
+        
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to atomInSmiles"""
@@ -310,9 +323,7 @@ class SAFETokenizer:
     GRAMMAR = 'SAFE'
 
     def __init__(self):
-        try:
-            import safe
-        except:
+        if safe is None:
             raise ModuleNotFoundError("No module named 'safe'. Install with 'pip install safe-mol'.")
 
     def tokenize(self, data, with_begin_and_end=True):
