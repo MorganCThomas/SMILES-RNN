@@ -27,6 +27,8 @@ class ReinforcementLearning:
                  psmiles=None,
                  psmiles_shuffle=True,
                  psmiles_multi=False,
+                 psmiles_lr_decay=1,
+                 psmiles_lr_epochs=10,
                  freeze=None):
         # Device
         self.device = device
@@ -74,11 +76,20 @@ class ReinforcementLearning:
         self.molscore = is_molscore
         self.save_dir = save_dir
         # Optimizer
-        self.optimizer = optimizer(self.agent.network.parameters(), lr=learning_rate)
+        self.optimizer = self._initialize_optimizer(lr=learning_rate, optimizer=optimizer)
+        self.scheduler = self._initialize_scheduler(start_factor=psmiles_lr_decay, total_iters=psmiles_lr_epochs)
         if freeze is not None:
             self._freeze_network(freeze)
         self.record = None
 
+    def _initialize_optimizer(self, lr=5e-4, optimizer=torch.optim.Adam):
+        return optimizer(self.agent.network.parameters(), lr=lr)
+    
+    def _initialize_scheduler(self, start_factor=0.1, total_iters=10):
+        # NOTE If we're using prompt smiles, soften learning rate for 10 updates to facilitate smoother learning
+        if self.psmiles_transform:
+            return torch.optim.lr_scheduler.LinearLR(self.optimizer, start_factor=start_factor, total_iters=total_iters, verbose=False)
+        
     def train(self, n_steps, save_freq):
         for step in tqdm(range(n_steps), total=n_steps):
             self._train_step(step=step)
@@ -102,6 +113,7 @@ class ReinforcementLearning:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        if self.scheduler: self.scheduler.step()
 
     def _train_step(self, step):
         raise NotImplementedError
@@ -116,7 +128,7 @@ class ReinforcementLearning:
                 batch_size)
             return seqs, smiles, agent_likelihood, probs, log_probs, critic_values
 
-    def _score(self, smiles, step): #, additional_formats=None):
+    def _score(self, smiles, step):
         try:
             if self.psmiles:
                 smiles = copy.deepcopy(smiles[-1])
@@ -129,12 +141,6 @@ class ReinforcementLearning:
             else:
                 scores = self.scoring_function(smiles, step)
             scores = utils.to_tensor(scores).to(self.device)
-        #try:
-        #    if additional_formats:
-        #        scores = self.scoring_function(smiles, additional_formats=additional_formats)
-        #    else:
-        #        scores = self.scoring_function(smiles)
-        #    scores = utils.to_tensor(scores).to(self.device)
         except (Exception, BaseException, SystemExit, KeyboardInterrupt) as e:
             if self.molscore:
                 # If anything fails, save smiles, agent, scoring_function etc.
@@ -153,17 +159,32 @@ class ReinforcementLearning:
                 raise e
         return scores
 
+    def _filter_smiles(self, smiles):
+        """Remove un-encodable SMILES, needed when using promptsmiles."""
+        failed = []
+        for i, smi in enumerate(smiles[-1]):
+            try:
+                seq = self.agent.vocabulary.encode(self.agent.tokenizer.tokenize(smi))
+            except:
+                failed.append(i)
+                
+        for it in smiles:
+            for i in reversed(failed):
+                it.pop(i)
+        return smiles
+
 
 class Reinforce(ReinforcementLearning):
     _short_name = 'RF'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate,
-        is_molscore=True, psmiles=None, psmiles_shuffle=True, psmiles_multi=False, freeze=None,
-        batch_size=64, **kwargs
+        is_molscore=True, psmiles=None, psmiles_shuffle=True, psmiles_multi=False, psmiles_lr_decay=1, psmiles_lr_epochs=10,
+        freeze=None, batch_size=64, **kwargs
         ):
         super().__init__(
-            device, model, agent, scoring_function, save_dir, optimizer, learning_rate,
-            is_molscore, psmiles, psmiles_shuffle, psmiles_multi, freeze=None
+            device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
         # Parameters
@@ -175,6 +196,8 @@ class Reinforce(ReinforcementLearning):
     def _train_step(self, step):
         # Sample
         seqs, smiles, agent_likelihood, probs, log_probs, critic_values = self._sample_batch(self.batch_size)
+        # Filter un-tokenized smiles
+        if self.psmiles: smiles = self._filter_smiles(smiles)
         # Score
         scores = self._score(smiles, step)
         # Compute loss
@@ -244,12 +267,13 @@ class Reinvent(ReinforcementLearning):
     _short_name = 'RV'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate,
-        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, freeze=None,
-        prior=None, batch_size=64, sigma=60, **kwargs
+        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_lr_decay=1, psmiles_lr_epochs=10,
+        freeze=None, prior=None, batch_size=64, sigma=60, **kwargs
         ):
         super().__init__(
-            device, model, agent, scoring_function, save_dir, optimizer, learning_rate,
-            is_molscore, psmiles, psmiles_multi, psmiles_shuffle, freeze=None
+            device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
         # Load prior
@@ -264,14 +288,16 @@ class Reinvent(ReinforcementLearning):
         self.record = {'loss': [],
                        'prior_nll': [],
                        'agent_nll': []}
-
+    
     def _train_step(self, step):
         # Sample
         seqs, smiles, agent_likelihood, probs, log_probs, critic_values = self._sample_batch(self.batch_size)
+        # Filter un-tokenized smiles
+        if self.psmiles: smiles = self._filter_smiles(smiles)
         # Score
-        self._score(smiles, step)
+        scores = self._score(smiles, step)
         # Compute loss
-        if self.psmiles: 
+        if self.psmiles:
             # NOTE seq, probs, log_probs, critic_values is None
             # NOTE we recompute gradients here as sampling is without graph
             if self.psmiles_multi:
@@ -403,12 +429,13 @@ class HillClimb(ReinforcementLearning):
     _short_name = 'HC'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, 
-        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, freeze=None,
-        batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256, **kwargs
+        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_lr_decay=1, psmiles_lr_epochs=10, 
+        freeze=None, batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256, **kwargs
         ):
         super().__init__(
-            device, model, agent, scoring_function, save_dir, optimizer, learning_rate, 
-            is_molscore, psmiles, psmiles_multi, psmiles_shuffle, freeze=None
+            device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
         # Parameters
@@ -425,6 +452,8 @@ class HillClimb(ReinforcementLearning):
         self.agent.network.eval()
         with torch.no_grad():
             seqs, smiles, agent_likelihood, probs, log_probs, _ = self._sample_batch(self.batch_size)
+        # Filter un-tokenized smiles
+        if self.psmiles: smiles = self._filter_smiles(smiles)
         # Score
         scores = self._score(smiles, step)
         # Record loss
@@ -527,12 +556,13 @@ class AugmentedHillClimb(ReinforcementLearning):
     _short_name = 'AHC'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, 
-        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, freeze=None,
-        prior=None, batch_size=64, sigma=60, topk=0.5, **kwargs
+        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_lr_decay=1, psmiles_lr_epochs=10, 
+        freeze=None, prior=None, batch_size=64, sigma=60, topk=0.5, **kwargs
         ):
         super().__init__(
-            device, model, agent, scoring_function, save_dir, optimizer, learning_rate, 
-            is_molscore, psmiles, psmiles_multi, psmiles_shuffle, freeze=None
+            device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
         # Load prior
@@ -555,6 +585,8 @@ class AugmentedHillClimb(ReinforcementLearning):
     def _train_step(self, step):
         # Sample
         seqs, smiles, agent_likelihood, probs, log_probs, critic_values = self._sample_batch(self.batch_size, psmiles=self.psmiles, psmiles_shuffle=self.psmiles_shuffle)
+        # Filter un-tokenized smiles
+        if self.psmiles: smiles = self._filter_smiles(smiles)
         # Score
         scores = self._score(smiles, step)
         # Compute loss

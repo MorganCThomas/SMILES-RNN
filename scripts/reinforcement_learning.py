@@ -73,6 +73,8 @@ def get_args():
         '--psmiles_canonical', action='store_true',
         help='Whether to attach decorations one at a time, based on attachment point with lowest NLL, otherwise attachment points will be shuffled within a batch'
         )
+    optional.add_argument('--psmiles_lr_decay', type=int, default=1, help='Amount to decay the learning rate at the beginning of iterative prompting (1=no decay)')
+    optional.add_argument('--psmiles_lr_epochs', type=int, default=10, help='Number of epochs before the decayed learning rate returns to normal')
 
     subparsers = parser.add_subparsers(title='RL strategy', dest='rl_strategy',
                                        help='Which reinforcement learning algorithm to use')
