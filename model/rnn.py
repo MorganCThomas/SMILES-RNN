@@ -4,7 +4,8 @@ Adaption of RNN model from https://github.com/MolecularAI/Reinvent
 
 from functools import partial
 from typing import List, Tuple, Union
-import warnings
+import logging
+logger = logging.getLogger(__name__)
 import numpy as np
 import torch
 import torch.nn as nn
@@ -240,11 +241,11 @@ class Model:
 
         padded_sequences = collate_fn(sequences)
         return self.likelihood(padded_sequences)
-
+    
+    @torch.no_grad()
     def _pSMILES_evaluate(self, smiles) -> torch.Tensor:
-        with torch.no_grad():
-            nll = self.likelihood_smiles(smiles)
-            return nll.cpu()
+        nll = self.likelihood_smiles(smiles)
+        return nll.cpu()
 
     def probability_smiles(self, smiles) -> torch.Tensor:
         tokens = [self.tokenizer.tokenize(smile) for smile in smiles]
@@ -439,7 +440,7 @@ class Model:
                 nlls = self.likelihood_smiles([utils.strip_attachment_points(smi)[0] for smi in rand_smi]).cpu().numpy()
             except KeyError:
                 # RDKit sometimes inserts a token that may not have been present in the vocabulary
-                warnings.warn(f"SMILES optimization failed for {smi}")
+                logger.warn(f"SMILES optimization failed for {smi}")
                 return smi, None
         
         opt_idx = np.argmin(nlls)
@@ -457,7 +458,7 @@ class Model:
                 nlls = self.likelihood_smiles(alt_smiles).cpu().numpy()
             except KeyError:
                 # RDKit sometimes inserts a token that may not have been present in the vocabulary
-                warnings.warn(f"SMILES optimization failed for {smiles}")
+                logger.warn(f"SMILES optimization failed for {smiles}")
                 return smiles, None
         preferred_smiles, nll = list(sorted(zip(alt_smiles, nlls), key=lambda x: x[1]))[0]
         return preferred_smiles, nll
@@ -558,30 +559,35 @@ class Model:
 
     @torch.no_grad()
     def _pSMILES_sample(self, prompt: Union[str, list] = None, batch_size: int = 64):
+        failed = []
         if isinstance(prompt, str):
-            # Convert prompt to sequence
-            pseq = torch.zeros((batch_size, self.max_sequence_length), dtype=torch.long)
-            tokens = self.tokenizer.tokenize(prompt, with_begin_and_end=True)[:-1] # Ignore stop token
-            encoded = torch.tensor(self.vocabulary.encode(tokens), dtype=torch.long)
-            pseq[:, :encoded.size(0)] = encoded
-            pseq = pseq.to(self.device)
-        elif isinstance(prompt, list):
-            assert len(prompt) == batch_size, "Number of prompts provided must match batch size"
-            # Convert prompts to sequence
+            prompt = [prompt] * batch_size
+
+        assert len(prompt) == batch_size, "Number of prompts provided must match batch size"
+        
+        # Convert prompts to sequence
+        seqs = []
+        for i, p in enumerate(prompt):
             try:
-                seqs = [self.vocabulary.encode(self.tokenizer.tokenize(p, with_begin_and_end=True)[:-1]) for p in prompt] # ignore stop token
-            except:
-                print(prompt)
-                raise
-            pseq = torch.vstack([tf.pad(torch.tensor(seq, dtype=torch.long), (0, self.max_sequence_length - len(seq))) for seq in seqs]).to(self.device)
-        else:
-            pseq = None
+                tokens = self.tokenizer.tokenize(p, with_begin_and_end=True)[:-1]
+                encoded = self.vocabulary.encode(tokens)
+                seqs.append(encoded)
+            except KeyError as e: # NOTE May encounter tokenization error
+                logger.warning(f"SMILES tokenization failed for {p}: KeyError {e} -> (returning prompt.)")
+                failed.append(i)
+                seqs.append(self.vocabulary.encode(["^"]))
+
+        pseq = torch.vstack([tf.pad(torch.tensor(seq, dtype=torch.long), (0, self.max_sequence_length - len(seq))) for seq in seqs]).to(self.device)
 
         # Pass to _sample with pseq
         seqs, nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=batch_size, pseq=pseq)
         # Convert to SMILES
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         nlls = nlls.data.cpu().numpy()
+        # Correct failed prompts
+        for i in reversed(failed):
+            smiles[i] = prompt[i]
+            nlls[i] = None
 
         return smiles, nlls
     
@@ -675,7 +681,7 @@ class Model:
         # ----- Prep-process fragment smiles
         if len(fsmiles) > 2:
             scan = True
-            warnings.warn("More than two fragments detected, sampling changed to scan") 
+            logger.warn("More than two fragments detected, sampling changed to scan") 
         at_pts = [utils.get_attachment_indexes(fsmi)[0] for fsmi in fsmiles] # Should only be one per frag
         n_fgs = len(fsmiles)
         # Optimize each fragment, then strip and select
@@ -784,7 +790,7 @@ class Model:
                         try:
                             for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(cfor_fsmi, with_begin_and_end=False)), dtype=torch.long)
                         except KeyError as e:
-                            warnings.warn(f"Failed to correctly assign ring numbers to {for_fsmi} due to the following error {e}") ##
+                            logger.warn(f"Failed to correctly assign ring numbers to {for_fsmi} due to the following error {e}") ##
                             for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(for_fsmi, with_begin_and_end=False)), dtype=torch.long)
                         for_seq = torch.hstack([torch.tensor(self.vocabulary["("]), for_seq, torch.tensor(self.vocabulary[")"])]) # Add branch
                         tseqs = []
@@ -856,12 +862,12 @@ class Model:
                     try:
                         for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(cfor_fsmi, with_begin_and_end=True)), dtype=torch.long)[1:]
                     except KeyError as e:
-                        warnings.warn("Failed to correctly assign ring numbers to {cfor_smi} due to the following error {e}")
+                        logger.warn("Failed to correctly assign ring numbers to {cfor_smi} due to the following error {e}")
                         for_seq = torch.tensor(self.vocabulary.encode(self.tokenizer.tokenize(for_fsmi, with_begin_and_end=True)), dtype=torch.long)[1:]
                     # Append
                     EOSi = torch.argwhere(batch_seqs[bi] == EOS).squeeze().min() # Get first end token (incase EOS is also padding)
                     if EOSi+len(for_seq) > self.max_sequence_length:
-                        warnings.warn("Sequence length too large for additional fragments, increase max_seqeuence_length")
+                        logger.warn("Sequence length too large for additional fragments, increase max_seqeuence_length")
                     else:
                         batch_seqs[bi, EOSi:EOSi+len(for_seq)] = for_seq
             
