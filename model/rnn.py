@@ -584,7 +584,7 @@ class Model:
                 # Add dummy thats replaced by prompt later
                 tokens = self.tokenizer.tokenize("c1ccccc1", with_begin_and_end=True)[:-1]
                 encoded = self.vocabulary.encode(tokens)
-                seqs.append(seqs.append(encoded))
+                seqs.append(encoded)
 
         pseq = torch.vstack([tf.pad(torch.tensor(seq, dtype=torch.long), (0, self.max_sequence_length - len(seq))) for seq in seqs]).to(self.device)
 
