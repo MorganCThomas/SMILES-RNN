@@ -27,6 +27,7 @@ class ReinforcementLearning:
                  psmiles=None,
                  psmiles_shuffle=True,
                  psmiles_multi=False,
+                 psmiles_optimize=False,
                  psmiles_lr_decay=1,
                  psmiles_lr_epochs=10,
                  freeze=None):
@@ -45,6 +46,7 @@ class ReinforcementLearning:
         self.psmiles = psmiles
         self.psmiles_shuffle = psmiles_shuffle
         self.psmiles_multi = psmiles_multi
+        self.psmiles_optimize = psmiles_optimize
         if psmiles:
             if isinstance(psmiles, list):
                 self.psmiles_transform = FragmentLinker(
@@ -53,8 +55,9 @@ class ReinforcementLearning:
                     sample_fn=self.agent._pSMILES_sample,
                     evaluate_fn=self.agent._pSMILES_evaluate,
                     batch_prompts=True,
+                    optimize_prompts=self.psmiles_optimize,
                     shuffle=self.psmiles_shuffle,
-                    scan=True,
+                    scan=False,
                     return_all=True,
                     )
             elif isinstance(psmiles, str):
@@ -64,6 +67,7 @@ class ReinforcementLearning:
                     sample_fn=self.agent._pSMILES_sample,
                     evaluate_fn=self.agent._pSMILES_evaluate,
                     batch_prompts=True,
+                    optimize_prompts=self.psmiles_optimize,
                     shuffle=self.psmiles_shuffle,
                     return_all=True,
                     )
@@ -178,12 +182,12 @@ class Reinforce(ReinforcementLearning):
     _short_name = 'RF'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate,
-        is_molscore=True, psmiles=None, psmiles_shuffle=True, psmiles_multi=False, psmiles_lr_decay=1, psmiles_lr_epochs=10,
+        is_molscore=True, psmiles=None, psmiles_shuffle=True, psmiles_multi=False, psmile_optimize=False, psmiles_lr_decay=1, psmiles_lr_epochs=10,
         freeze=None, batch_size=64, **kwargs
         ):
         super().__init__(
             device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
-            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, psmiles_optimize=psmiles_optimize,
             psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
@@ -267,12 +271,12 @@ class Reinvent(ReinforcementLearning):
     _short_name = 'RV'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate,
-        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_lr_decay=1, psmiles_lr_epochs=10,
+        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_optimize=False, psmiles_lr_decay=1, psmiles_lr_epochs=10,
         freeze=None, prior=None, batch_size=64, sigma=60, **kwargs
         ):
         super().__init__(
             device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
-            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, psmiles_optimize=psmiles_optimize,
             psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
@@ -429,12 +433,12 @@ class HillClimb(ReinforcementLearning):
     _short_name = 'HC'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, 
-        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_lr_decay=1, psmiles_lr_epochs=10, 
+        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_optimize=False, psmiles_lr_decay=1, psmiles_lr_epochs=10, 
         freeze=None, batch_size=64, topk=0.5, epochs_per_step=2, epochs_batch_size=256, **kwargs
         ):
         super().__init__(
             device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
-            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, psmiles_optimize=psmiles_optimize,
             psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
@@ -556,12 +560,12 @@ class AugmentedHillClimb(ReinforcementLearning):
     _short_name = 'AHC'
     def __init__(
         self, device, model, agent, scoring_function, save_dir, optimizer, learning_rate, 
-        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_lr_decay=1, psmiles_lr_epochs=10, 
+        is_molscore=True, psmiles=None, psmiles_multi=False, psmiles_shuffle=True, psmiles_optimize=False, psmiles_lr_decay=1, psmiles_lr_epochs=10, 
         freeze=None, prior=None, batch_size=64, sigma=60, topk=0.5, **kwargs
         ):
         super().__init__(
             device=device, model=model, agent=agent, scoring_function=scoring_function, save_dir=save_dir, optimizer=optimizer, learning_rate=learning_rate,
-            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, 
+            is_molscore=is_molscore, psmiles=psmiles, psmiles_multi=psmiles_multi, psmiles_shuffle=psmiles_shuffle, psmiles_optimize=psmiles_optimize,
             psmiles_lr_decay=psmiles_lr_decay, psmiles_lr_epochs=psmiles_lr_epochs, freeze=None
             )
 
