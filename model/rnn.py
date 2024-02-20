@@ -246,6 +246,7 @@ class Model:
         seqs = []
         failed = []
         for i, smi in enumerate(smiles):
+            smi = smi.replace("[SH]", "S") # Specific fix for vocabulary without [SH] -> implicit S
             tokens = self.tokenizer.tokenize(smi)
             try:
                 encoded = self.vocabulary.encode(tokens)
