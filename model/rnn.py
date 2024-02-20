@@ -575,6 +575,7 @@ class Model:
         seqs = []
         for i, p in enumerate(prompt):
             try:
+                p = p.replace("[SH]", "S") # Specific fix for vocabulary without [SH] -> implicit S
                 tokens = self.tokenizer.tokenize(p, with_begin_and_end=True)[:-1]
                 encoded = self.vocabulary.encode(tokens)
                 seqs.append(encoded)
