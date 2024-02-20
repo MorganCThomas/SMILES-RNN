@@ -226,41 +226,47 @@ class Model:
             }
             torch.save(save_dict, file)
 
+    def _collate_fn(self, encoded_seqs):
+        """Function to take a list of encoded sequences and turn them into a batch"""
+        max_length = max([seq.size(0) for seq in encoded_seqs])
+        collated_arr = torch.zeros(len(encoded_seqs), max_length, dtype=torch.long)  # padded with zeroes
+        for i, seq in enumerate(encoded_seqs):
+            collated_arr[i, :seq.size(0)] = seq
+        return collated_arr
+
     def likelihood_smiles(self, smiles) -> torch.Tensor:
         tokens = [self.tokenizer.tokenize(smile) for smile in smiles]
         encoded = [self.vocabulary.encode(token) for token in tokens]
         sequences = [torch.tensor(encode, dtype=torch.long) for encode in encoded]
-
-        def collate_fn(encoded_seqs):
-            """Function to take a list of encoded sequences and turn them into a batch"""
-            max_length = max([seq.size(0) for seq in encoded_seqs])
-            collated_arr = torch.zeros(len(encoded_seqs), max_length, dtype=torch.long)  # padded with zeroes
-            for i, seq in enumerate(encoded_seqs):
-                collated_arr[i, :seq.size(0)] = seq
-            return collated_arr
-
-        padded_sequences = collate_fn(sequences)
+        padded_sequences = self._collate_fn(sequences)
         return self.likelihood(padded_sequences)
     
     @torch.no_grad()
     def _pSMILES_evaluate(self, smiles) -> torch.Tensor:
-        nll = self.likelihood_smiles(smiles)
-        return nll.cpu()
+        seqs = []
+        failed = []
+        for i, smi in enumerate(smiles):
+            tokens = self.tokenizer.tokenize(smi)
+            try:
+                encoded = self.vocabulary.encode(tokens)
+                seqs.append(torch.tensor(encoded, dtype=torch.long))
+            except KeyError:
+                failed.append(i)
+                # Add dummy benzene that's replaced by None later
+                tokens = self.tokenizer.tokenize("c1ccccc1")
+                encoded = self.vocabulary.encode(tokens)
+                seqs.append(torch.tensor(encoded, dtype=torch.long))
+        padded_sequences = self._collate_fn(seqs)
+        nlls = self.likelihood(padded_sequences).data.cpu().numpy()
+        for i in reversed(failed):
+            nlls[i] = None
+        return nlls
 
     def probability_smiles(self, smiles) -> torch.Tensor:
         tokens = [self.tokenizer.tokenize(smile) for smile in smiles]
         encoded = [self.vocabulary.encode(token) for token in tokens]
         sequences = [torch.tensor(encode, dtype=torch.long) for encode in encoded]
-
-        def collate_fn(encoded_seqs):
-            """Function to take a list of encoded sequences and turn them into a batch"""
-            max_length = max([seq.size(0) for seq in encoded_seqs])
-            collated_arr = torch.zeros(len(encoded_seqs), max_length, dtype=torch.long)  # padded with zeroes
-            for i, seq in enumerate(encoded_seqs):
-                collated_arr[i, :seq.size(0)] = seq
-            return collated_arr
-
-        padded_sequences = collate_fn(sequences)
+        padded_sequences = self._collate_fn(sequences)
         return self.probabilities(padded_sequences)
 
     def likelihood(self, sequences) -> torch.Tensor:
@@ -564,7 +570,7 @@ class Model:
             prompt = [prompt] * batch_size
 
         assert len(prompt) == batch_size, "Number of prompts provided must match batch size"
-        
+
         # Convert prompts to sequence
         seqs = []
         for i, p in enumerate(prompt):
@@ -575,7 +581,10 @@ class Model:
             except KeyError as e: # NOTE May encounter tokenization error
                 logger.warning(f"SMILES tokenization failed for {p}: KeyError {e} -> (returning prompt.)")
                 failed.append(i)
-                seqs.append(self.vocabulary.encode(["^"]))
+                # Add dummy thats replaced by prompt later
+                tokens = self.tokenizer.tokenize("c1ccccc1", with_begin_and_end=True)[:-1]
+                encoded = self.vocabulary.encode(tokens)
+                seqs.append(seqs.append(encoded))
 
         pseq = torch.vstack([tf.pad(torch.tensor(seq, dtype=torch.long), (0, self.max_sequence_length - len(seq))) for seq in seqs]).to(self.device)
 
