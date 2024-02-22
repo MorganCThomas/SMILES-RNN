@@ -567,6 +567,7 @@ class Model:
     @torch.no_grad()
     def _pSMILES_sample(self, prompt: Union[str, list] = None, batch_size: int = 64):
         failed = []
+        corrected = []
         if isinstance(prompt, str):
             prompt = [prompt] * batch_size
 
@@ -576,15 +577,18 @@ class Model:
         seqs = []
         for i, p in enumerate(prompt):
             try:
-                p = p.replace("[SH]", "S") # Specific fix for vocabulary without [SH] -> implicit S
-                tokens = self.tokenizer.tokenize(p, with_begin_and_end=True)[:-1]
+                # Specific fix for vocabulary without [SH] -> implicit S
+                if "[SH]" in p:
+                    p = p.replace("[SH]", "S")
+                    corrected.append(i)
+                tokens = self.tokenizer.tokenize(p, with_begin_and_end=False)
                 encoded = self.vocabulary.encode(tokens)
                 seqs.append(encoded)
             except KeyError as e: # NOTE May encounter tokenization error
                 logger.warning(f"SMILES tokenization failed for {p}: KeyError {e} -> (returning prompt.)")
                 failed.append(i)
                 # Add dummy thats replaced by prompt later
-                tokens = self.tokenizer.tokenize("c1ccccc1", with_begin_and_end=True)[:-1]
+                tokens = self.tokenizer.tokenize("c1ccccc1", with_begin_and_end=False)
                 encoded = self.vocabulary.encode(tokens)
                 seqs.append(encoded)
 
@@ -595,6 +599,9 @@ class Model:
         # Convert to SMILES
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
         nlls = nlls.data.cpu().numpy()
+        # Correct corrected prompts
+        for i in reversed(corrected):
+            smiles[i] = prompt[i] + smiles[i][len(prompt[i].replace("[SH]", "S")):]
         # Correct failed prompts
         for i in reversed(failed):
             smiles[i] = prompt[i]
