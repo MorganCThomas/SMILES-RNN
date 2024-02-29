@@ -565,7 +565,7 @@ class Model:
         return sequences.data, nlls, action_probs, action_log_probs, values
 
     @torch.no_grad()
-    def _pSMILES_sample(self, prompt: Union[str, list] = None, batch_size: int = 64):
+    def _pSMILES_sample(self, prompt: Union[str, list] = None, batch_size: int = 64, temperature: float = 1.0):
         failed = []
         corrected = []
         if isinstance(prompt, str):
@@ -595,19 +595,17 @@ class Model:
         pseq = torch.vstack([tf.pad(torch.tensor(seq, dtype=torch.long), (0, self.max_sequence_length - len(seq))) for seq in seqs]).to(self.device)
 
         # Pass to _sample with pseq
-        seqs, nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=batch_size, pseq=pseq)
+        seqs, nlls, batch_action_probs, batch_action_log_probs, _ = self._sample(batch_size=batch_size, pseq=pseq, temperature=temperature)
         # Convert to SMILES
         smiles = [self.tokenizer.untokenize(self.vocabulary.decode(seq)) for seq in seqs.cpu().numpy()]
-        nlls = nlls.data.cpu().numpy()
         # Correct corrected prompts
         for i in reversed(corrected):
             smiles[i] = prompt[i] + smiles[i][len(prompt[i].replace("[SH]", "S")):]
         # Correct failed prompts
         for i in reversed(failed):
             smiles[i] = prompt[i]
-            nlls[i] = None
 
-        return smiles, nlls
+        return smiles
     
     @torch.no_grad()
     def _batch_sample_decorate(self, num=128, batch_size=64, temperature=1.0, ssmiles=None, shuffle=True):

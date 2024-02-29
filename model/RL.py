@@ -124,8 +124,8 @@ class ReinforcementLearning:
 
     def _sample_batch(self, batch_size):
         if self.psmiles_transform:
-            smiles, nlls = self.psmiles_transform.sample(batch_size=batch_size)
-            return None, smiles, nlls, None, None, None
+            smiles = self.psmiles_transform.sample(batch_size=batch_size)
+            return None, smiles, None, None, None, None
         else:
             # NOTE Old implementation supplies psmiles and psmiles_shuffle to sample_sequences_and_smiles
             seqs, smiles, agent_likelihood, probs, log_probs, critic_values = self.agent.sample_sequences_and_smiles(
