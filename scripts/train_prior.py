@@ -87,6 +87,10 @@ def main(args):
         tokenizer = DeepSMILESTokenizer(compress=True)
     if args.grammar == 'SELFIES':
         tokenizer = SELFIESTokenizer()
+    if args.grammar == 'AIS':
+        tokenizer = AISTokenizer()
+    if args.grammar == 'SAFE':
+        tokenizer = SAFETokenizer()
     if args.grammar == 'SmiZip':
         if not args.smizip_ngrams or not os.path.isfile(args.smizip_ngrams):
             sys.exit('ERROR: For the SmiZip grammar, you need to use the --smizip-ngrams option to specify the SmiZip JSON file listing the n-grams')
@@ -260,11 +264,11 @@ def get_args():
     required.add_argument('-s', '--suffix', type=str, help='Suffix to name files', required=True)
 
     #optional = parser.add_argument_group('Optional arguments')
-    parser.add_argument('--grammar', choices=['SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_cr',
-                                                'deepSMILES_c', 'deepSMILES_cb', 'deepSMILES_b', 'SELFIES',
-                                                'SmiZip'],
-                          default='SMILES',
-                          help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
+    parser.add_argument('--grammar', choices=[
+        'SMILES', 'deepSMILES', 'deepSMILES_r', 'deepSMILES_cr', 'deepSMILES_c', 'deepSMILES_cb', 'deepSMILES_b',
+        'SELFIES', 'AIS', 'SAFE', 'SmiZip'
+        ],
+        default='SMILES', help='Choice of grammar to use, SMILES will be encoded and decoded via grammar')
     parser.add_argument('--randomize', action='store_true',
                           help='Training smiles will be randomized using default arguments (10 restricted)')
     parser.add_argument('--n_jobs', type=int, default=1, help="If randomizing use multiple cores")
