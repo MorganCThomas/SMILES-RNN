@@ -609,6 +609,7 @@ class Model:
     
     @torch.no_grad()
     def _batch_sample_decorate(self, num=128, batch_size=64, temperature=1.0, ssmiles=None, shuffle=True):
+        raise DeprecationWarning
         # ----- Prep-process partial smiles
         at_pts = utils.get_attachment_indexes(ssmiles)
         n_pts = len(at_pts)
@@ -694,6 +695,7 @@ class Model:
 
     @torch.no_grad()
     def _batch_sample_link(self, num=128, batch_size=64, temperature=1.0, fsmiles=None, shuffle=True, scan=False, intermediate_optimize=False, intermediate_sample=False, detect_existing=True):
+        raise DeprecationWarning
         # ----- Prep-process fragment smiles
         if len(fsmiles) > 2:
             scan = True
@@ -750,8 +752,6 @@ class Model:
             # Update
             sequences[batch_idx:batch_idx+size, 0, :] = batch_seqs
             nlls[batch_idx:batch_idx+size, 0] += batch_nlls
-            #action_probs.data[batch_idx:batch_idx+size, 0, :] = batch_action_probs
-            #action_log_probs.data[batch_idx:batch_idx+size, 0, :] = batch_action_log_probs
             
             if scan:
                 for bi in range(len(batch_seqs)):
@@ -785,7 +785,6 @@ class Model:
 
                                 # Update
                                 if fragment_exists:
-                                    #print(f'{batch_idx}:{bi}: Found existing {batch_for_pseq[bi][fragment_exists][4]} fragment')
                                     _ = batch_for_pseq[bi].pop(fragment_exists)
                                     rem_fgs -= 1
                                     fidx += 1
@@ -857,16 +856,12 @@ class Model:
                         # Update
                         sequences[batch_idx+bi, fidx, :] = opt_bseq
                         nlls[batch_idx+bi, fidx] += opt_nll.squeeze()
-                        #action_probs.data[batch_idx+bi, fidx, :] = batch_action_probs
-                        #action_log_probs.data[batch_idx:batch_idx+size, fidx, :] = batch_action_log_probs
 
                         # Update while loop
                         rem_fgs -= 1
                         fidx += 1
                         fseq_idxs.extend(opt_idxs)
                         bseq = opt_bseq
-                    
-                    #print(f'{bi}: Inserted {fidx-1} fragments into indexes {fseq_idxs}')
         
             # Append Final fragment
             else:
@@ -890,8 +885,6 @@ class Model:
                 # Update
                 sequences[batch_idx:batch_idx+size, 1, :] = batch_seqs
                 nlls[batch_idx:batch_idx+size, 1] += batch_nlls
-                #action_probs.data[batch_idx:batch_idx+size, 1, :] = batch_action_probs
-                #action_log_probs.data[batch_idx:batch_idx+size, 1, :] = batch_action_log_probs
         
             # Update batch index
             batch_idx += size

@@ -28,7 +28,7 @@ class ReinforcementLearning:
                  psmiles_shuffle=True,
                  psmiles_multi=False,
                  psmiles_optimize=False,
-                 psmiles_lr_decay=1,
+                 psmiles_lr_decay=1, # 1=Do not decay
                  psmiles_lr_epochs=10,
                  freeze=None):
         # Device
@@ -90,7 +90,7 @@ class ReinforcementLearning:
         return optimizer(self.agent.network.parameters(), lr=lr)
     
     def _initialize_scheduler(self, start_factor=0.1, total_iters=10):
-        # NOTE If we're using prompt smiles, soften learning rate for 10 updates to facilitate smoother learning
+        # NOTE If we're using prompt smiles, you can soften learning rate for 10 updates to facilitate smoother learning
         if self.psmiles_transform:
             return torch.optim.lr_scheduler.LinearLR(self.optimizer, start_factor=start_factor, total_iters=total_iters, verbose=False)
         

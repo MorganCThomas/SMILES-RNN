@@ -284,6 +284,12 @@ class Model:
 
         return sequences.data, nlls, action_probs, action_log_probs, None
 
+    def _pSMILES_evaluate(self, **kwargs):
+        raise NotImplementedError("PromptSMILES for Transformers has not yet been implemented")
+
+    def _pSMILES_sample(self, **kwargs):
+        raise NotImplementedError("PromptSMILES for Transformers has not yet been implemented")
+
 
 if __name__ == '__main__':
     import torch
