@@ -9,7 +9,7 @@ from rdkit.Chem import AllChem as Chem
 
 from model.rnn import *
 from model.transformer import Model as TransformerModel
-from model.GTr import Model as StableTransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model import utils
 
 rdBase.DisableLog("rdApp.error")
@@ -28,7 +28,7 @@ def main(args):
         os.makedirs(output_directory)
 
     # Set device
-    device = utils.set_default_device_cuda(args.device)
+    device = utils.get_device(args.device)
     logger.info(f'Device set to {device.type}')
 
     # Load model
@@ -44,9 +44,9 @@ def main(args):
     
     # Sample TODO different sample modes e.g. beam search
     if args.native:
-        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature)
+        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature, psmiles=args.psmiles)
     else:
-        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature)
+        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature, psmiles=args.psmiles)
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:
@@ -58,10 +58,10 @@ def main(args):
         while (len(set(canonical_smiles)) < args.number):
             if args.native:
                 new_smiles, _ = model.sample_native(num=(args.number - len(set(canonical_smiles))),
-                                                    temperature=args.temperature)
+                                                    temperature=args.temperature, psmiles=args.psmiles)
             else:
                 new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
-                                                    temperature=args.temperature)
+                                                    temperature=args.temperature, psmiles=args.psmiles)
             new_canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in new_smiles
                                     if Chem.MolFromSmiles(smi)]
             canonical_smiles += new_canonical_smiles
@@ -80,13 +80,18 @@ def get_args():
     parser.add_argument('-p', '--path', type=str, help='Path to checkpoint (.ckpt)', required=True)
     parser.add_argument('-m', '--model', type=str, help='Choice of architecture', choices=['RNN', 'Transformer', 'GTr'], required=True)
     parser.add_argument('-o', '--output', type=str, help='Path to save file (e.g. Data/Prior_10k.smi)', required=True)
-    parser.add_argument('-d', '--device', default='gpu', help=' ')
-    parser.add_argument('-n', '--number', type=int, default=10000, help=' ')
+    parser.add_argument('-d', '--device', default='gpu', help='Device to use')
+    parser.add_argument('-n', '--number', type=int, default=10000, help='Number of smiles to be sampled')
     parser.add_argument('-t', '--temperature', type=float, default=1.0,
                         help='Temperature to sample (1: multinomial, <1: Less random, >1: More random)')
+    parser.add_argument('--psmiles', type=str, default=None, 
+    help='Either scaffold smiles labelled with decoration points (*) or fragments for linking with connection points (*) and seperated by a period .')
     parser.add_argument('--unique', action='store_true', help='Keep sampling until n unique canonical molecules have been sampled')
     parser.add_argument('--native', action='store_true', help='If trained using an alternative grammar e.g., SELFIES. don\'t convet back to SMILES')
     args = parser.parse_args()
+    # Process prompt smiles
+    if args.psmiles and ("." in args.psmiles):
+        args.psmiles = args.psmiles.split(".")
     return args
 
 

@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from model.vocabulary import *
 from model.rnn import Model
 from model.transformer import Model as TransformerModel
-from model.GTr import Model as StableTransformerModel
+from model.gated_transformer import Model as StableTransformerModel
 from model.dataset import *
 from model import utils
 from model.utils import randomize_smiles
@@ -33,7 +33,7 @@ def main(args):
         os.makedirs(args.output_directory)
 
     # Set device
-    device = utils.set_default_device_cuda(args.device)
+    device = utils.get_device(args.device)
     logger.info(f'Device set to {device.type}')
 
     # Setup Tensorboard

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='SMILES-RNN',
-    version='1.0',
+    version='1.1',
     packages=['model'],
     license='MIT',
     author='Morgan Thomas',
