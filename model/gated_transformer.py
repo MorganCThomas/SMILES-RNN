@@ -303,7 +303,7 @@ class Model:
                 # TODO has to be done one by one, otherwise only inserting one bloody token!
                 input_vectors = torch.zeros((size, self.max_sequence_length), dtype=torch.long)
                 input_vectors[:, 0] = self.vocabulary["^"]
-                input_vector = input_vector.to(self.device)
+                input_vectors = input_vectors.to(self.device)
                 sequences[batch_idx:batch_idx + size, 0] = self.vocabulary["^"] * torch.ones(size, dtype=torch.long)
                 for t in range(1, self.max_sequence_length - 1):
                     logits = self.network(input_vectors[:, :t])[:, -1, :] # Final prediction only
