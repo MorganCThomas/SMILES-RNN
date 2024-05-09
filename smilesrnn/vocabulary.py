@@ -2,25 +2,36 @@
 Vocabulary helper class from https://github.com/MolecularAI/Reinvent
 """
 
-import re
 import copy
+import re
+
 import numpy as np
 from tqdm import tqdm
 
-try: import deepsmiles
-except: deepsmiles = None
+try:
+    import deepsmiles
+except ImportError:
+    deepsmiles = None
 
-try: import selfies
-except: selfies = None
+try:
+    import selfies
+except ImportError:
+    selfies = None
 
-try: import smizip
-except: smizip = None
+try:
+    import smizip
+except ImportError:
+    smizip = None
 
-try: import atomInSmiles as AIS
-except: AIS = None
+try:
+    import atomInSmiles as AIS
+except ImportError:
+    AIS = None
 
-try: import safe
-except: safe = None
+try:
+    import safe
+except ImportError:
+    safe = None
 
 
 # contains the data structure
@@ -96,12 +107,12 @@ class Vocabulary:
 class SMILESTokenizer:
     """Deals with the tokenization and untokenization of SMILES."""
 
-    GRAMMAR = 'SMILES'
+    GRAMMAR = "SMILES"
     REGEXPS = {
         "brackets": re.compile(r"(\[[^\]]*\])"),
         "2_ring_nums": re.compile(r"(%\d{2})"),
         "brcl": re.compile(r"(Br|Cl)"),
-        "atom": re.compile(r"[a-zA-Z]")
+        "atom": re.compile(r"[a-zA-Z]"),
     }
     REGEXP_ORDER = ["brackets", "2_ring_nums", "brcl"]
 
@@ -112,6 +123,7 @@ class SMILESTokenizer:
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string."""
+
         def split_by(data, regexps):
             if not regexps:
                 return list(data)
@@ -144,16 +156,15 @@ class SMILESTokenizer:
 class DeepSMILESTokenizer:
     """Deals with the tokenization and untokenization of SMILES."""
 
-    GRAMMAR = 'deepSMILES'
-    REGEXPS = {
-        "brackets": re.compile(r"(\[[^\]]*\])"),
-        "brcl": re.compile(r"(Br|Cl)")
-    }
+    GRAMMAR = "deepSMILES"
+    REGEXPS = {"brackets": re.compile(r"(\[[^\]]*\])"), "brcl": re.compile(r"(Br|Cl)")}
     REGEXP_ORDER = ["brackets", "brcl"]
 
     def __init__(self, rings=True, branches=True, compress=False):
         if deepsmiles is None:
-            raise ModuleNotFoundError("No module named 'deepsmiles'. Install with 'pip install deepsmiles'.")
+            raise ModuleNotFoundError(
+                "No module named 'deepsmiles'. Install with 'pip install deepsmiles'."
+            )
         self.converter = deepsmiles.Converter(rings=rings, branches=branches)
         self.run_compression = compress
 
@@ -194,7 +205,7 @@ class DeepSMILESTokenizer:
                 if self.run_compression:
                     smi = self.decompress(smi)
                 smi = self.converter.decode(smi)
-            except: # deepsmiles.DecodeError doesn't capture IndexError?
+            except Exception:  # deepsmiles.DecodeError doesn't capture IndexError?
                 smi = None
         return smi
 
@@ -213,9 +224,9 @@ class DeepSMILESTokenizer:
         while i < N:
             x = dsmi[i]
             compressed.append(x)
-            if x == ')':
+            if x == ")":
                 start = i
-                while i + 1 < N and dsmi[i + 1] == ')':
+                while i + 1 < N and dsmi[i + 1] == ")":
                     i += 1
                 compressed.append(str(i + 1 - start))
             i += 1
@@ -243,13 +254,15 @@ class DeepSMILESTokenizer:
         i = 0
         while i < N:
             x = cdsmi[i]
-            if x == ')':
+            if x == ")":
                 start = i
                 while i + 1 < N and cdsmi[i + 1].isdigit():
                     i += 1
                 if i == start:
-                    raise ValueError(f"A number should follow the parenthesis in {cdsmi}")
-                number = int(cdsmi[start + 1:i + 1])
+                    raise ValueError(
+                        f"A number should follow the parenthesis in {cdsmi}"
+                    )
+                number = int(cdsmi[start + 1 : i + 1])
                 decompressed.append(")" * number)
             else:
                 decompressed.append(x)
@@ -260,11 +273,13 @@ class DeepSMILESTokenizer:
 class SELFIESTokenizer:
     """Deals with the tokenization and untokenization of SMILES."""
 
-    GRAMMAR = 'SELFIES'
+    GRAMMAR = "SELFIES"
 
     def __init__(self):
         if selfies is None:
-            raise ModuleNotFoundError("No module named 'selfies'. Install with 'pip install selfies'.")
+            raise ModuleNotFoundError(
+                "No module named 'selfies'. Install with 'pip install selfies'."
+            )
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to SELFIES"""
@@ -285,7 +300,7 @@ class SELFIESTokenizer:
         if convert_to_smiles:
             try:
                 smi = selfies.decoder(smi)
-            except:
+            except Exception:
                 smi = None
         return smi
 
@@ -293,12 +308,13 @@ class SELFIESTokenizer:
 class AISTokenizer:
     """Deals with the tokenization and untokenization of SMILES."""
 
-    GRAMMAR = 'AIS'
+    GRAMMAR = "AIS"
 
     def __init__(self):
         if AIS is None:
-            raise ModuleNotFoundError("No module named 'atomInSmiles'. Install with 'pip install atomInSmiles'.")
-        
+            raise ModuleNotFoundError(
+                "No module named 'atomInSmiles'. Install with 'pip install atomInSmiles'."
+            )
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to atomInSmiles"""
@@ -320,7 +336,7 @@ class AISTokenizer:
         if convert_to_smiles:
             try:
                 smi = AIS.decode(smi)
-            except:
+            except Exception:
                 smi = None
         return smi
 
@@ -328,11 +344,13 @@ class AISTokenizer:
 class SAFETokenizer:
     """Deals with the tokenization and untokenization of SMILES."""
 
-    GRAMMAR = 'SAFE'
+    GRAMMAR = "SAFE"
 
     def __init__(self):
         if safe is None:
-            raise ModuleNotFoundError("No module named 'safe'. Install with 'pip install safe-mol'.")
+            raise ModuleNotFoundError(
+                "No module named 'safe'. Install with 'pip install safe-mol'."
+            )
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to atomInSmiles"""
@@ -353,7 +371,7 @@ class SAFETokenizer:
         if convert_to_smiles:
             try:
                 smi = safe.decode(smi)
-            except:
+            except Exception:
                 smi = None
         return smi
 
@@ -361,16 +379,18 @@ class SAFETokenizer:
 class SmiZipTokenizer:
     """Deals with the tokenization and untokenization of SmiZipped SMILES."""
 
-    GRAMMAR = 'SmiZip'
+    GRAMMAR = "SmiZip"
 
     def __init__(self, ngrams):
         if smizip is None:
-            raise ImportError("No module named 'smizip'. Try 'python3 -m pip install smizip'.")
+            raise ImportError(
+                "No module named 'smizip'. Try 'python3 -m pip install smizip'."
+            )
         self.zipper = smizip.SmiZip(ngrams)
 
     def tokenize(self, data, with_begin_and_end=True):
         """Tokenizes a SMILES string via conversion to SmiZip tokens"""
-        tokens = self.zipper.zip(data, format=1) # format=1 returns the tokens
+        tokens = self.zipper.zip(data, format=1)  # format=1 returns the tokens
         if with_begin_and_end:
             tokens = ["^"] + tokens + ["$"]
         return tokens
@@ -394,7 +414,9 @@ def create_vocabulary(smiles_list, tokenizer):
         tokens.update(tokenizer.tokenize(smi, with_begin_and_end=False))
 
     vocabulary = Vocabulary()
-    vocabulary.update(["$", "^"] + sorted(tokens))  # end token is 0 (also counts as padding)
+    vocabulary.update(
+        ["$", "^"] + sorted(tokens)
+    )  # end token is 0 (also counts as padding)
     return vocabulary
 
 
@@ -418,12 +440,15 @@ def fit_smiles_to_vocabulary(vocabulary, smiles_list, tokenizer):
         if all([token in vocabulary._tokens.keys() for token in tokens]):
             fit_smiles.append(smi)
         else:
-            unfit_tokens += [token for token in tokens
-                             if token not in vocabulary._tokens.keys()]
+            unfit_tokens += [
+                token for token in tokens if token not in vocabulary._tokens.keys()
+            ]
             unfit_smiles.append(smi)
 
     if len(unfit_smiles) > 0:
-        print(f'WARNING: {len(unfit_smiles)} smiles do not fit existing vocabulary due to presence of the'
-              f' following tokens\n{set(unfit_tokens)}')
+        print(
+            f"WARNING: {len(unfit_smiles)} smiles do not fit existing vocabulary due to presence of the"
+            f" following tokens\n{set(unfit_tokens)}"
+        )
 
     return fit_smiles

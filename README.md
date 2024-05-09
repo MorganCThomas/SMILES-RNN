@@ -3,22 +3,19 @@
 This repo contains code for a SMILES-based recurrent neural network used for *de novo* molecule generation with several  reinforcement learning algorithms available for molecule optimization. This was written to be used in conjunction with [MolScore](https://github.com/MorganCThomas/MolScore) - although any other scoring function can also be used.
 
 ## Installation
-First setup a conda environment with the correct requirements.
+This code can be installed via pip.
 
 ```
-conda env create -f environment.yml
+pip install smiles-rnn
 ```
 
-Or to update a prexisting environment.
+Or via cloning this repository and setting up an environment with mamba.
 
 ```
-conda env update --name myenv --file environment.yml
-```
-
-The package can also be installed into the conda evironment.
-
-```
-python setup.py install  # if you plan to make changes use 'develop' instead of 'install'
+git clone https://github.com/MorganCThomas/SMILES-RNN.git
+cd SMILES-RNN
+mamba env create -f environment.yml
+pip install ./
 ```
 
 ## Usage

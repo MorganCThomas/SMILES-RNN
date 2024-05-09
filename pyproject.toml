@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SMILES-RNN"
+version = "1.2"
+authors = [
+  { name="Morgan Thomas", email="morganthomas263@gmail.com" },
+]
+description = "A scoring, benchmarking and evaluation framework for goal directed generative models"
+readme = "README.md"
+requires-python = ">=3.6, <3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/MorganCThomas/SMILES-RNN"
+Issues = "https://github.com/MorganCThomas/SMILES-RNN/issues"
