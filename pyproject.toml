@@ -12,9 +12,24 @@ description = "A scoring, benchmarking and evaluation framework for goal directe
 readme = "README.md"
 requires-python = ">=3.6, <3.12"
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+  # Development status
+  "Development Status :: 4 - Beta", 
+
+  # Python
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.6",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+
+  # Licensing
+  "License :: OSI Approved :: MIT License",
+
+  # Operating system
+  "Operating System :: OS Independent",
 ]
 dynamic = ["dependencies"]
 
