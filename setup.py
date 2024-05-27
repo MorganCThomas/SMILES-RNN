@@ -1,13 +1,23 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
-    name='SMILES-RNN',
-    version='1.1',
-    packages=['model'],
-    license='MIT',
-    author='Morgan Thomas',
-    author_email='morganthomas263@gmail.com',
-    description='A Generic SMILES-RNN for de novo drug design',
-    scripts=['scripts/sample_model.py', 'scripts/train_prior.py', 'scripts/fine_tune.py', 'scripts/reinforcement_learning.py',
-     'utility_scripts/deep_smiles.py', 'utility_scripts/randomize_smiles.py']
+    packages=["smilesrnn"],
+    scripts=[
+        "scripts/sample_model.py",
+        "scripts/train_prior.py",
+        "scripts/fine_tune.py",
+        "scripts/reinforcement_learning.py",
+    ],
+    install_requires=[
+        "numpy",
+        "torch",
+        "deepsmiles",
+        "tensorboard",
+        "tqdm",
+        "deepsmiles",
+        "selfies",
+        "google-auth",
+        "promptsmiles",
+    ]
+
 )

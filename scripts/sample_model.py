@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-import os
-from os import path
 import argparse
 import logging
+import os
+from os import path
 
 from rdkit import rdBase
 from rdkit.Chem import AllChem as Chem
 
-from model.rnn import *
-from model.transformer import Model as TransformerModel
-from model.gated_transformer import Model as StableTransformerModel
-from model import utils
+from smilesrnn import utils
+from smilesrnn.gated_transformer import Model as StableTransformerModel
+from smilesrnn.rnn import Model as RNNModel
+from smilesrnn.transformer import Model as TransformerModel
 
 rdBase.DisableLog("rdApp.error")
 
-logger = logging.getLogger('sample')
+logger = logging.getLogger("sample")
 logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
@@ -29,65 +29,123 @@ def main(args):
 
     # Set device
     device = utils.get_device(args.device)
-    logger.info(f'Device set to {device.type}')
+    logger.info(f"Device set to {device.type}")
 
     # Load model
-    if args.model == 'RNN':
-        model = Model.load_from_file(file_path=args.path, sampling_mode=True, device=device)
-    elif args.model == 'Transformer':
-        model = TransformerModel.load_from_file(file_path=args.path, sampling_mode=True, device=device)
-    elif args.model == 'GTr':
-        model = StableTransformerModel.load_from_file(file_path=args.path, sampling_mode=True, device=device)
+    if args.model == "RNN":
+        model = RNNModel.load_from_file(
+            file_path=args.path, sampling_mode=True, device=device
+        )
+    elif args.model == "Transformer":
+        model = TransformerModel.load_from_file(
+            file_path=args.path, sampling_mode=True, device=device
+        )
+    elif args.model == "GTr":
+        model = StableTransformerModel.load_from_file(
+            file_path=args.path, sampling_mode=True, device=device
+        )
     else:
         print("Model must be either [RNN, Transformer, GTr]")
         raise KeyError
-    
+
     # Sample TODO different sample modes e.g. beam search
     if args.native:
-        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature, psmiles=args.psmiles)
+        smiles, _ = model.sample_native(
+            num=args.number, temperature=args.temperature, psmiles=args.psmiles
+        )
     else:
-        smiles, _ = model.sample_smiles(num=args.number, temperature=args.temperature, psmiles=args.psmiles)
+        smiles, _ = model.sample_smiles(
+            num=args.number, temperature=args.temperature, psmiles=args.psmiles
+        )
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:
-        logger.info('Canonicalizing smiles')
-        canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in smiles
-                            if Chem.MolFromSmiles(smi)]
+        logger.info("Canonicalizing smiles")
+        canonical_smiles = [
+            Chem.MolToSmiles(Chem.MolFromSmiles(smi))
+            for smi in smiles
+            if Chem.MolFromSmiles(smi)
+        ]
 
-        logger.info(f'Topping up {len(set(canonical_smiles))} smiles')
-        while (len(set(canonical_smiles)) < args.number):
+        logger.info(f"Topping up {len(set(canonical_smiles))} smiles")
+        while len(set(canonical_smiles)) < args.number:
             if args.native:
-                new_smiles, _ = model.sample_native(num=(args.number - len(set(canonical_smiles))),
-                                                    temperature=args.temperature, psmiles=args.psmiles)
+                new_smiles, _ = model.sample_native(
+                    num=(args.number - len(set(canonical_smiles))),
+                    temperature=args.temperature,
+                    psmiles=args.psmiles,
+                )
             else:
-                new_smiles, _ = model.sample_smiles(num=(args.number - len(set(canonical_smiles))),
-                                                    temperature=args.temperature, psmiles=args.psmiles)
-            new_canonical_smiles = [Chem.MolToSmiles(Chem.MolFromSmiles(smi)) for smi in new_smiles
-                                    if Chem.MolFromSmiles(smi)]
+                new_smiles, _ = model.sample_smiles(
+                    num=(args.number - len(set(canonical_smiles))),
+                    temperature=args.temperature,
+                    psmiles=args.psmiles,
+                )
+            new_canonical_smiles = [
+                Chem.MolToSmiles(Chem.MolFromSmiles(smi))
+                for smi in new_smiles
+                if Chem.MolFromSmiles(smi)
+            ]
             canonical_smiles += new_canonical_smiles
 
         smiles = list(set(canonical_smiles))
 
     # Save
-    logger.info(f'Saving {len(set(smiles))} smiles')
+    logger.info(f"Saving {len(set(smiles))} smiles")
     utils.save_smiles(smiles, args.output)
     return
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Sample smiles from model',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-p', '--path', type=str, help='Path to checkpoint (.ckpt)', required=True)
-    parser.add_argument('-m', '--model', type=str, help='Choice of architecture', choices=['RNN', 'Transformer', 'GTr'], required=True)
-    parser.add_argument('-o', '--output', type=str, help='Path to save file (e.g. Data/Prior_10k.smi)', required=True)
-    parser.add_argument('-d', '--device', default='gpu', help='Device to use')
-    parser.add_argument('-n', '--number', type=int, default=10000, help='Number of smiles to be sampled')
-    parser.add_argument('-t', '--temperature', type=float, default=1.0,
-                        help='Temperature to sample (1: multinomial, <1: Less random, >1: More random)')
-    parser.add_argument('--psmiles', type=str, default=None, 
-    help='Either scaffold smiles labelled with decoration points (*) or fragments for linking with connection points (*) and seperated by a period .')
-    parser.add_argument('--unique', action='store_true', help='Keep sampling until n unique canonical molecules have been sampled')
-    parser.add_argument('--native', action='store_true', help='If trained using an alternative grammar e.g., SELFIES. don\'t convet back to SMILES')
+    parser = argparse.ArgumentParser(
+        description="Sample smiles from model",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-p", "--path", type=str, help="Path to checkpoint (.ckpt)", required=True
+    )
+    parser.add_argument(
+        "-m",
+        "--model",
+        type=str,
+        help="Choice of architecture",
+        choices=["RNN", "Transformer", "GTr"],
+        required=True,
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Path to save file (e.g. Data/Prior_10k.smi)",
+        required=True,
+    )
+    parser.add_argument("-d", "--device", default="gpu", help="Device to use")
+    parser.add_argument(
+        "-n", "--number", type=int, default=10000, help="Number of smiles to be sampled"
+    )
+    parser.add_argument(
+        "-t",
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Temperature to sample (1: multinomial, <1: Less random, >1: More random)",
+    )
+    parser.add_argument(
+        "--psmiles",
+        type=str,
+        default=None,
+        help="Either scaffold smiles labelled with decoration points (*) or fragments for linking with connection points (*) and seperated by a period .",
+    )
+    parser.add_argument(
+        "--unique",
+        action="store_true",
+        help="Keep sampling until n unique canonical molecules have been sampled",
+    )
+    parser.add_argument(
+        "--native",
+        action="store_true",
+        help="If trained using an alternative grammar e.g., SELFIES. don't convet back to SMILES",
+    )
     args = parser.parse_args()
     # Process prompt smiles
     if args.psmiles and ("." in args.psmiles):
@@ -95,6 +153,6 @@ def get_args():
     return args
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = get_args()
     main(args)
