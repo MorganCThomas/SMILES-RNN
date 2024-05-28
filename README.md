@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/374712112.svg)](https://zenodo.org/doi/10.5281/zenodo.11356192)
+
 # SMILES-RNN
 
 This repo contains code for a SMILES-based recurrent neural network used for *de novo* molecule generation with several  reinforcement learning algorithms available for molecule optimization. This was written to be used in conjunction with [MolScore](https://github.com/MorganCThomas/MolScore) - although any other scoring function can also be used.
