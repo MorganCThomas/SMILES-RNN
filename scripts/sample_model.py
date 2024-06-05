@@ -2,8 +2,10 @@
 import argparse
 import logging
 import os
+from functools import partial
 from os import path
 
+from promptsmiles import FragmentLinker, ScaffoldDecorator
 from rdkit import rdBase
 from rdkit.Chem import AllChem as Chem
 
@@ -50,16 +52,56 @@ def main(args):
 
     # Sample TODO different sample modes e.g. beam search
     if args.native:
-        smiles, _ = model.sample_native(
-            num=args.number, temperature=args.temperature, psmiles=args.psmiles
-        )
+        if args.psmiles:
+            raise NotImplementedError(
+                "PromptSMILES is not implemented with non-SMILES grammars"
+            )
+        smiles, _ = model.sample_native(num=args.number, temperature=args.temperature)
     else:
-        smiles, _ = model.sample_smiles(
-            num=args.number, temperature=args.temperature, psmiles=args.psmiles
-        )
+        if args.psmiles:
+            pSMILES_sample = partial(
+                model._pSMILES_sample, temperature=args.temperature
+            )
+            batch_size = 128
+            if isinstance(args.psmiles, list):
+                psmiles_transform = FragmentLinker(
+                    fragments=args.psmiles,
+                    batch_size=batch_size,
+                    sample_fn=pSMILES_sample,
+                    evaluate_fn=model._pSMILES_evaluate,
+                    batch_prompts=True,
+                    optimize_prompts=True,
+                    shuffle=True,
+                    scan=False,
+                    return_all=False,
+                )
+            elif isinstance(args.psmiles, str):
+                psmiles_transform = ScaffoldDecorator(
+                    scaffold=args.psmiles,
+                    batch_size=batch_size,
+                    sample_fn=pSMILES_sample,
+                    evaluate_fn=model._pSMILES_evaluate,
+                    batch_prompts=True,
+                    optimize_prompts=True,
+                    shuffle=True,
+                    return_all=False,
+                )
+            smiles = []
+            for batch_size in [batch_size for _ in range(args.number // batch_size)] + [
+                args.number % batch_size
+            ]:
+                smiles += psmiles_transform.sample()
+        else:
+            smiles, _ = model.sample_smiles(
+                num=args.number, temperature=args.temperature
+            )
 
     # If looking for unique only smiles, keep sampling until a unique number is reached
     if args.unique:
+        if args.psmiles:
+            raise NotImplementedError(
+                "Unique sampling is not yet implemented with PromptSMILES"
+            )
         logger.info("Canonicalizing smiles")
         canonical_smiles = [
             Chem.MolToSmiles(Chem.MolFromSmiles(smi))
