@@ -20,6 +20,8 @@ mamba env create -f environment.yml
 pip install ./
 ```
 
+**Installation time**: Installation of smiles-rnn in the environment should complete in less than 5 minutes (tested using mamba). 
+
 ## Usage
 Arguments to any of the scripts can be printed by running 
 
