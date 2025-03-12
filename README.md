@@ -1,8 +1,15 @@
-[![DOI](https://zenodo.org/badge/374712112.svg)](https://zenodo.org/doi/10.5281/zenodo.11356192)
-
 # SMILES-RNN
 
-This repo contains code for a SMILES-based recurrent neural network used for *de novo* molecule generation with several  reinforcement learning algorithms available for molecule optimization. This was written to be used in conjunction with [MolScore](https://github.com/MorganCThomas/MolScore) - although any other scoring function can also be used.
+[![DOI](https://zenodo.org/badge/374712112.svg)](https://zenodo.org/doi/10.5281/zenodo.11356192)
+
+[Paper](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-022-00646-z)
+
+This repo contains code for a SMILES-based chemical language models for molecule optimization with reinforcement learning, including [Augmented Hill-Climb](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-022-00646-z). This can be used for:
+- De novo design
+- Scaffold elaboration (with [PromptSMILES](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-024-00866-5))
+- Fragment linking (with [PromptSMILES](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-024-00866-5))
+
+This works plug and play with [MolScore](https://github.com/MorganCThomas/MolScore) for scoring molecules and calculating rewards - although any other scoring function can also be used.
 
 ## Installation
 This code can be installed via pip.
