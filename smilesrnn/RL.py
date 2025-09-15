@@ -905,11 +905,7 @@ class AugmentedHillClimb(ReinforcementLearning):
     def _train_step(self, step):
         # Sample
         seqs, smiles, agent_likelihood, probs, log_probs, critic_values = (
-            self._sample_batch(
-                self.batch_size,
-                psmiles=self.psmiles,
-                psmiles_shuffle=self.psmiles_shuffle,
-            )
+            self._sample_batch(self.batch_size)
         )
         # Filter un-tokenized smiles
         if self.psmiles:

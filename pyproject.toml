@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SMILES-RNN"
-version = "2.0.1"
+version = "2.0.2"
 authors = [
   { name="Morgan Thomas", email="morganthomas263@gmail.com" },
 ]
 description = "A scoring, benchmarking and evaluation framework for goal directed generative models"
 keywords = ["SMILES", "Chemical language models", "De novo", "Constrained de novo", "chemistry", "drug design", "reinforcement learning"]
 readme = "README.md"
-requires-python = ">=3.6, <3.12"
+requires-python = ">=3.6"
 classifiers = [
   # Development status
   "Development Status :: 4 - Beta", 
