@@ -9,7 +9,6 @@ import warnings
 import numpy as np
 import rdkit.Chem.Draw as Draw
 import torch
-import torch.utils.tensorboard.summary as tbxs
 from rdkit import Chem
 from rdkit.Chem import Descriptors, rdqueries
 
@@ -124,6 +123,7 @@ def add_image(writer, tag, image, global_step=None, walltime=None):
     """
     Adds an image from a PIL image.
     """
+    import torch.utils.tensorboard.summary as tbxs
     channel = len(image.getbands())
     width, height = image.size
 

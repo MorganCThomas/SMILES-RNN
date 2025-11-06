@@ -26,3 +26,4 @@ dependencies:
     - google-auth==1.35.0
     - selfies==1.0.4
     - promptsmiles
+    - molscore
